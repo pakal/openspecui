@@ -19,10 +19,10 @@
 - [x] 3.2 CI-equivalent local checks passed
 - [x] 3.3 Real browser acceptance passed locally
 - [x] 3.4 PR checks passed
-- [ ] 3.5 Release automation published a new version
-- [ ] 3.6 Newly published package acceptance passed
+- [x] 3.5 Release automation published a new version
+- [x] 3.6 Newly published package acceptance passed
 
 ## 4. Merge Readiness
 
-- [ ] 4.1 OpenSpec archive flow completed
-- [ ] 4.2 PR merge approved
+- [x] 4.1 OpenSpec archive flow completed
+- [x] 4.2 PR merge approved

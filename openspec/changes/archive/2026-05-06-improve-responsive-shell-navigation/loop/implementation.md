@@ -4,7 +4,7 @@
 - Git page "Other Worktrees" now uses responsive worktree cards that preserve branch/path content and compact icon-only switch controls.
 - Desktop sidebar now supports persisted collapse/expand behavior with icon-only collapsed navigation.
 - Main `opsx-ui-views` spec now records desktop navigation collapse and Git worktree responsive action requirements.
-- Focused unit tests, full local CI-equivalent checks, and local real-browser acceptance pass.
+- Focused unit tests, full local CI-equivalent checks, local real-browser acceptance, release automation, and npm-package real-browser acceptance pass.
 
 ## Decisions Taken
 
@@ -17,6 +17,7 @@
 ## Divergence Notes
 
 - User clarified that responsiveness must not sacrifice content. The implementation looped from compact rows to dedicated worktree cards so long worktree paths remain visible and wrap instead of being omitted.
+- `pnpm changeversion` generated version `2.3.7`; its automatic git handoff hit a local transient `.web-sync-*` add failure while a dev server was active, so the generated release files were committed and merged through release PR #108 after stopping the dev server.
 
 ## Loopback Triggers
 
