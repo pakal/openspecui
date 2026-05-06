@@ -1,5 +1,11 @@
 # @openspecui/web
 
+## 2.3.7
+
+### Patch Changes
+
+- fa66f39: Improve Git worktree switch responsiveness and add collapsible desktop sidebar navigation.
+
 ## 2.3.6
 
 ### Patch Changes
