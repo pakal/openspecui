@@ -139,10 +139,14 @@ function scrollCardIntoView(
     0
   )
 
-  scrollContainer.scrollTo({
-    top: requestedTop,
-    behavior: 'auto',
-  })
+  if (typeof scrollContainer.scrollTo === 'function') {
+    scrollContainer.scrollTo({
+      top: requestedTop,
+      behavior: 'auto',
+    })
+  } else {
+    scrollContainer.scrollTop = requestedTop
+  }
 
   const appliedTop = scrollContainer.scrollTop
   return {

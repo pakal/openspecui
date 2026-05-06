@@ -22,6 +22,13 @@ function createCaller(partial: Partial<Context> = {}) {
     kernel: {} as Context['kernel'],
     searchService: {} as Context['searchService'],
     dashboardOverviewService: {} as Context['dashboardOverviewService'],
+    projectRecoveryService:
+      partial.projectRecoveryService ??
+      ({
+        getCurrent: () => ({ state: 'idle' }),
+        subscribe: () => () => {},
+        dispose: () => {},
+      } as Context['projectRecoveryService']),
     watcher: partial.watcher,
     projectDir: partial.projectDir ?? '/tmp/opsx-project',
   })
@@ -47,6 +54,7 @@ describe('systemRouter', () => {
         'project-dir-replaced': 1,
         manual: 0,
       },
+      projectResidency: { state: 'active' },
     })
 
     const caller = createCaller({ watcher: undefined })
@@ -56,6 +64,7 @@ describe('systemRouter', () => {
     expect(status.watcherGeneration).toBe(4)
     expect(status.watcherReinitializeCount).toBe(1)
     expect(status.watcherLastReinitializeReason).toBe('project-dir-replaced')
+    expect(status.projectRecovery).toEqual({ state: 'idle' })
   })
 
   it('reports watcher disabled when runtime status is missing', async () => {

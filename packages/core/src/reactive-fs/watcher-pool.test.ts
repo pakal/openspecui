@@ -1,3 +1,4 @@
+import { realpathSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +15,7 @@ import {
   getActiveWatcherCount,
   initWatcherPool,
   isWatcherPoolInitialized,
+  subscribeWatcherRuntimeStatus,
 } from './watcher-pool.js'
 
 describe('WatcherPool', () => {
@@ -38,6 +40,21 @@ describe('WatcherPool', () => {
     it('should handle re-initialization with same directory', async () => {
       await initWatcherPool(tempDir)
       expect(isWatcherPoolInitialized()).toBe(true)
+    })
+
+    it('emits watcher runtime state to subscribers', async () => {
+      const listener = vi.fn()
+      const unsubscribe = subscribeWatcherRuntimeStatus(listener)
+
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectDir: realpathSync(tempDir),
+          initialized: true,
+          projectResidency: { state: 'active' },
+        })
+      )
+
+      unsubscribe()
     })
   })
 

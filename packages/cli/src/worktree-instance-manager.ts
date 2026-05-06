@@ -55,6 +55,27 @@ function resolvePnpmCommand(): string {
   return process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm'
 }
 
+function createNodeCliCommand(options: {
+  cliEntry: string
+  projectDir: string
+  port: number
+  cwd: string
+}): SpawnCommandConfig {
+  return {
+    command: process.execPath,
+    args: [
+      options.cliEntry,
+      'start',
+      options.projectDir,
+      '--port',
+      String(options.port),
+      '--no-open',
+    ],
+    cwd: options.cwd,
+    env: { ...process.env },
+  }
+}
+
 export function createWorktreeServerCommand(options: {
   runtimeDir: string
   projectDir: string
@@ -62,6 +83,17 @@ export function createWorktreeServerCommand(options: {
 }): SpawnCommandConfig {
   const workspace = resolveLocalCliWorkspace(options.runtimeDir)
   if (workspace) {
+    const cliDistEntry = join(workspace.cliPackageDir, 'dist', 'cli.mjs')
+    if (existsSync(cliDistEntry)) {
+      // Prefer the built CLI entry so recovery handoff does not depend on nested pnpm script resolution.
+      return createNodeCliCommand({
+        cliEntry: cliDistEntry,
+        projectDir: options.projectDir,
+        port: options.port,
+        cwd: workspace.repoRoot,
+      })
+    }
+
     return {
       command: resolvePnpmCommand(),
       args: [
@@ -80,19 +112,12 @@ export function createWorktreeServerCommand(options: {
     }
   }
 
-  return {
-    command: process.execPath,
-    args: [
-      join(options.runtimeDir, 'cli.mjs'),
-      'start',
-      options.projectDir,
-      '--port',
-      String(options.port),
-      '--no-open',
-    ],
+  return createNodeCliCommand({
+    cliEntry: join(options.runtimeDir, 'cli.mjs'),
+    projectDir: options.projectDir,
+    port: options.port,
     cwd: options.projectDir,
-    env: { ...process.env },
-  }
+  })
 }
 
 async function waitForServerReady(options: {

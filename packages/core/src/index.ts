@@ -62,9 +62,13 @@ export {
   // Reactive file operations
   reactiveReadFile,
   reactiveStat,
+  subscribeWatcherRuntimeStatus,
   type PathCallback,
+  type ProjectResidencyEvictionReason,
+  type ProjectResidencyStatus,
   type ProjectWatcherReinitializeReason,
   type ProjectWatcherRuntimeStatus,
+  type ProjectWatcherRuntimeStatusListener,
   type ReactiveStateOptions,
   type WatchEvent,
   type WatchEventType,
@@ -192,6 +196,7 @@ export {
   type HostedBackendHealthResponse,
 } from './hosted-app.js'
 export { VIRTUAL_PROJECT_DIRNAME, toOpsxDisplayPath } from './opsx-display-path.js'
+export { type ProjectRecoveryStatus } from './runtime-types.js'
 
 // OPSX Kernel - reactive in-memory data store
 export { OpsxKernel, type TemplateContentMap } from './opsx-kernel.js'

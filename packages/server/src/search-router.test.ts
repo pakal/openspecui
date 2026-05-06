@@ -31,6 +31,11 @@ describe('search router', () => {
       kernel: {} as never,
       searchService: searchService as never,
       dashboardOverviewService: {} as never,
+      projectRecoveryService: {
+        getCurrent: () => ({ state: 'idle' }),
+        subscribe: () => () => {},
+        dispose: () => {},
+      } as never,
       projectDir: '/tmp/project',
     })
 

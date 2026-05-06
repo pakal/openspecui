@@ -25,6 +25,7 @@ import {
   getWatcherRuntimeStatus,
   GitConfigSchema,
   sniffGlobalCli,
+  subscribeWatcherRuntimeStatus,
   TerminalConfigSchema,
   TerminalRendererEngineSchema,
   type AIToolOption,
@@ -32,6 +33,7 @@ import {
   type ArtifactInstructions,
   type ChangeStatus,
   type DashboardOverview,
+  type ProjectRecoveryStatus,
   type SchemaDetail,
   type SchemaInfo,
   type SchemaResolution,
@@ -62,6 +64,7 @@ import {
   listCurrentWorktreeGitEntries,
 } from './git-panel-data.js'
 import { sameGitPath } from './git-shared.js'
+import type { ProjectRecoveryService } from './project-recovery-service.js'
 import { reactiveKV } from './reactive-kv.js'
 import {
   createReactiveSubscription,
@@ -76,6 +79,7 @@ export interface Context {
   kernel: OpsxKernel
   searchService: SearchService
   dashboardOverviewService: DashboardOverviewService
+  projectRecoveryService: ProjectRecoveryService
   gitWorktreeHandoff?: GitWorktreeHandoffService
   watcher?: OpenSpecWatcher
   projectDir: string
@@ -337,13 +341,16 @@ async function fetchOpsxTemplateContents(
   return ctx.kernel.getTemplateContents(schema)
 }
 
-function buildSystemStatus(ctx: Context): {
+interface SystemStatusPayload {
   projectDir: string
   watcherEnabled: boolean
   watcherGeneration: number
   watcherReinitializeCount: number
   watcherLastReinitializeReason: string | null
-} {
+  projectRecovery: ProjectRecoveryStatus
+}
+
+function buildSystemStatus(ctx: Context): SystemStatusPayload {
   const runtime = getWatcherRuntimeStatus()
   return {
     projectDir: ctx.projectDir,
@@ -351,6 +358,7 @@ function buildSystemStatus(ctx: Context): {
     watcherGeneration: runtime?.generation ?? 0,
     watcherReinitializeCount: runtime?.reinitializeCount ?? 0,
     watcherLastReinitializeReason: runtime?.lastReinitializeReason ?? null,
+    projectRecovery: ctx.projectRecoveryService.getCurrent(),
   }
 }
 
@@ -1348,16 +1356,28 @@ export const systemRouter = router({
   }),
 
   subscribe: publicProcedure.subscription(({ ctx }) => {
-    return observable<ReturnType<typeof buildSystemStatus>>((emit) => {
-      emit.next(buildSystemStatus(ctx))
+    return observable<SystemStatusPayload>((emit) => {
+      const pushStatus = () => {
+        emit.next(buildSystemStatus(ctx))
+      }
+
+      pushStatus()
+      const unsubscribeWatcherRuntime = subscribeWatcherRuntimeStatus(() => {
+        pushStatus()
+      })
+      const unsubscribeProjectRecovery = ctx.projectRecoveryService.subscribe(() => {
+        pushStatus()
+      })
 
       const timer = setInterval(() => {
-        emit.next(buildSystemStatus(ctx))
+        pushStatus()
       }, 3000)
       timer.unref()
 
       return () => {
         clearInterval(timer)
+        unsubscribeWatcherRuntime()
+        unsubscribeProjectRecovery()
       }
     })
   }),

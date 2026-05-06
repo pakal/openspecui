@@ -4,6 +4,7 @@ import {
   getProjectWatcher,
   type ProjectWatcher,
   type ProjectWatcherRuntimeStatus,
+  type ProjectWatcherRuntimeStatusListener,
 } from './project-watcher.js'
 
 /**
@@ -41,11 +42,39 @@ const subscriptionCache = new Map<string, PathSubscription>()
 /** 防抖定时器 */
 const debounceTimers = new Map<string, NodeJS.Timeout>()
 
+const watcherRuntimeStatusListeners = new Set<(status: WatcherRuntimeStatus | null) => void>()
+let releaseProjectWatcherRuntimeSubscription: (() => void) | null = null
+
 /** watcher 运行时状态（供 server 订阅） */
 export interface WatcherRuntimeStatus extends ProjectWatcherRuntimeStatus {
   projectDir: string | null
   initialized: boolean
   subscriptionCount: number
+}
+
+function emitWatcherRuntimeStatus(): void {
+  const status = getWatcherRuntimeStatus()
+  for (const listener of watcherRuntimeStatusListeners) {
+    listener(status)
+  }
+}
+
+function bindProjectWatcherRuntimeStatus(): void {
+  releaseProjectWatcherRuntimeSubscription?.()
+  releaseProjectWatcherRuntimeSubscription = null
+
+  if (!globalProjectWatcher) {
+    emitWatcherRuntimeStatus()
+    return
+  }
+
+  const forward: ProjectWatcherRuntimeStatusListener = () => {
+    emitWatcherRuntimeStatus()
+  }
+  releaseProjectWatcherRuntimeSubscription = globalProjectWatcher.subscribeRuntimeStatus(forward, {
+    emitCurrent: false,
+  })
+  emitWatcherRuntimeStatus()
 }
 
 /**
@@ -66,11 +95,14 @@ export async function initWatcherPool(projectDir: string): Promise<void> {
 
   // 关闭旧的 watcher
   if (globalProjectWatcher) {
+    releaseProjectWatcherRuntimeSubscription?.()
+    releaseProjectWatcherRuntimeSubscription = null
     await globalProjectWatcher.close()
   }
 
   globalProjectDir = normalizedDir
   globalProjectWatcher = getProjectWatcher(normalizedDir)
+  bindProjectWatcherRuntimeStatus()
   await globalProjectWatcher.init()
 }
 
@@ -197,10 +229,13 @@ export async function closeAllWatchers(): Promise<void> {
 
   // 关闭 ProjectWatcher
   if (globalProjectWatcher) {
+    releaseProjectWatcherRuntimeSubscription?.()
+    releaseProjectWatcherRuntimeSubscription = null
     await globalProjectWatcher.close()
     globalProjectWatcher = null
     globalProjectDir = null
   }
+  emitWatcherRuntimeStatus()
 }
 
 /**
@@ -234,5 +269,20 @@ export function getWatcherRuntimeStatus(): WatcherRuntimeStatus | null {
     reinitializeCount: runtime.reinitializeCount,
     lastReinitializeReason: runtime.lastReinitializeReason,
     reinitializeReasonCounts: runtime.reinitializeReasonCounts,
+    projectResidency: runtime.projectResidency,
+  }
+}
+
+export function subscribeWatcherRuntimeStatus(
+  listener: (status: WatcherRuntimeStatus | null) => void,
+  options: { emitCurrent?: boolean } = {}
+): () => void {
+  watcherRuntimeStatusListeners.add(listener)
+  if (options.emitCurrent !== false) {
+    listener(getWatcherRuntimeStatus())
+  }
+
+  return () => {
+    watcherRuntimeStatusListeners.delete(listener)
   }
 }
