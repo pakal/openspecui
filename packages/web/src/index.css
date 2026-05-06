@@ -923,6 +923,17 @@ html[data-vt-kind='tab-carousel'][data-vt-direction='backward']::view-transition
 .desktop-status {
   display: none;
 }
+.desktop-sidebar {
+  width: 16rem;
+  min-width: 16rem;
+  padding: 1rem;
+  overflow: hidden;
+}
+.desktop-sidebar[data-collapsed='true'] {
+  width: 3.5rem;
+  min-width: 3.5rem;
+  padding: 0.5rem;
+}
 .mobile-header,
 .mobile-tabbar {
   display: flex;

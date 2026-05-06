@@ -3,6 +3,7 @@ import { useNavLayout } from '@/lib/use-nav-controller'
 import { VTLink, vtNavController } from '@/lib/view-transitions/navigation'
 import { GripVertical } from 'lucide-react'
 import { useCallback, useRef, useState } from 'react'
+import { Tooltip } from '../tooltip'
 import { allNavItems, type NavItem } from './nav-items'
 
 interface AreaNavProps {
@@ -14,6 +15,8 @@ interface AreaNavProps {
   useLinks?: boolean
   /** Called after an item is clicked/navigated to (e.g. to close mobile menu) */
   onNavigate?: () => void
+  /** Render as icon-only and disable drag/drop affordances */
+  collapsed?: boolean
 }
 
 // Module-level: track which tab is currently being dragged (shared between AreaNav instances)
@@ -23,7 +26,7 @@ let _draggedTabId: TabId | null = null
  * Draggable nav section for an area.
  * Uses HTML5 Drag and Drop to move tabs between areas and reorder within an area.
  */
-export function AreaNav({ area, tabs, className, useLinks, onNavigate }: AreaNavProps) {
+export function AreaNav({ area, tabs, className, useLinks, onNavigate, collapsed }: AreaNavProps) {
   const [dragOverArea, setDragOverArea] = useState(false)
   const [dropIndicator, setDropIndicator] = useState<{
     index: number
@@ -136,13 +139,14 @@ export function AreaNav({ area, tabs, className, useLinks, onNavigate }: AreaNav
     .filter(Boolean) as NavItem[]
 
   const shouldUseLink = area === 'main' || useLinks
+  const iconOnly = collapsed === true
 
   return (
     <ul
       className={`min-h-[2rem] space-y-1 ${dragOverArea ? 'bg-muted/50 rounded-md' : ''} ${className ?? ''}`}
-      onDragOver={handleAreaDragOver}
-      onDragLeave={handleAreaDragLeave}
-      onDrop={handleDrop}
+      onDragOver={iconOnly ? undefined : handleAreaDragOver}
+      onDragLeave={iconOnly ? undefined : handleAreaDragLeave}
+      onDrop={iconOnly ? undefined : handleDrop}
     >
       {items.map((item, index) => {
         const isActiveBottom = area === 'bottom' && item.to === activeBottomTabId
@@ -152,49 +156,67 @@ export function AreaNav({ area, tabs, className, useLinks, onNavigate }: AreaNav
         return (
           <li
             key={item.to}
-            draggable
-            onDragStart={(e) => handleDragStart(e, item.to as TabId)}
-            onDragEnd={handleDragEnd}
-            onDragOver={(e) => handleItemDragOver(e, index)}
-            className="group relative cursor-grab"
+            draggable={!iconOnly}
+            onDragStart={iconOnly ? undefined : (e) => handleDragStart(e, item.to as TabId)}
+            onDragEnd={iconOnly ? undefined : handleDragEnd}
+            onDragOver={iconOnly ? undefined : (e) => handleItemDragOver(e, index)}
+            className={`group relative ${iconOnly ? 'cursor-default' : 'cursor-grab'}`}
           >
-            {showLineBefore && (
+            {!iconOnly && showLineBefore && (
               <div className="bg-border -top-0.25 pointer-events-none absolute left-4 right-4 h-0.5 -translate-y-0.5 rounded" />
             )}
             {shouldUseLink ? (
-              <VTLink
-                to={item.to}
-                draggable={false}
-                onDragStart={(e) => e.preventDefault()}
-                onClick={onNavigate}
-                className="hover:bg-muted [&.active]:bg-primary [&.active]:text-primary-foreground flex items-center gap-2 rounded-md px-3 py-2"
-              >
-                <GripVertical className="-ml-2.5 -mr-1.5 h-3 w-3 shrink-0 opacity-0 group-hover:opacity-40" />
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span className="font-nav text-base tracking-[0.04em]">{item.label}</span>
-              </VTLink>
+              <Tooltip content={iconOnly ? item.label : undefined} sideOffset={12}>
+                <VTLink
+                  to={item.to}
+                  draggable={false}
+                  onDragStart={(e) => e.preventDefault()}
+                  onClick={onNavigate}
+                  aria-label={iconOnly ? item.label : undefined}
+                  title={iconOnly ? item.label : undefined}
+                  className={`hover:bg-muted [&.active]:bg-primary [&.active]:text-primary-foreground flex items-center gap-2 rounded-md py-2 ${
+                    iconOnly ? 'justify-center px-2' : 'px-3'
+                  }`}
+                >
+                  {!iconOnly ? (
+                    <GripVertical className="-ml-2.5 -mr-1.5 h-3 w-3 shrink-0 opacity-0 group-hover:opacity-40" />
+                  ) : null}
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {!iconOnly ? (
+                    <span className="font-nav text-base tracking-[0.04em]">{item.label}</span>
+                  ) : null}
+                </VTLink>
+              </Tooltip>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  if (isActiveBottom) {
-                    vtNavController.deactivateBottom()
-                  } else {
-                    void vtNavController.activateBottom(item.to)
-                  }
-                  onNavigate?.()
-                }}
-                className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left ${
-                  isActiveBottom ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                }`}
-              >
-                <GripVertical className="-ml-2.5 -mr-1.5 h-3 w-3 shrink-0 opacity-0 group-hover:opacity-40" />
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span className="font-nav text-base tracking-[0.04em]">{item.label}</span>
-              </button>
+              <Tooltip content={iconOnly ? item.label : undefined} sideOffset={12}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isActiveBottom) {
+                      vtNavController.deactivateBottom()
+                    } else {
+                      void vtNavController.activateBottom(item.to)
+                    }
+                    onNavigate?.()
+                  }}
+                  aria-label={iconOnly ? item.label : undefined}
+                  title={iconOnly ? item.label : undefined}
+                  className={`flex w-full items-center gap-2 rounded-md py-2 ${
+                    iconOnly ? 'justify-center px-2' : 'px-3 text-left'
+                  } ${isActiveBottom ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}
+                >
+                  {!iconOnly ? (
+                    <GripVertical className="-ml-2.5 -mr-1.5 h-3 w-3 shrink-0 opacity-0 group-hover:opacity-40" />
+                  ) : null}
+                  <item.icon className="h-4 w-4 shrink-0" />
+                  {!iconOnly ? (
+                    <span className="font-nav text-base tracking-[0.04em]">{item.label}</span>
+                  ) : null}
+                </button>
+              </Tooltip>
             )}
 
-            {showLineAfter && (
+            {!iconOnly && showLineAfter && (
               <div className="bg-border -bottom-0.25 pointer-events-none absolute left-4 right-4 h-0.5 translate-y-0.5 rounded" />
             )}
           </li>

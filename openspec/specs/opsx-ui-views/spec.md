@@ -156,3 +156,36 @@ The UI SHALL provide a Config view dedicated to OPSX project configuration.
 - **GIVEN** the Schemas tab is open
 - **WHEN** the user is allowed to manage schemas
 - **THEN** the UI SHALL provide Add and Delete actions
+
+### Requirement: Desktop Navigation Collapse
+
+The UI SHALL allow desktop navigation to collapse into an icon-only rail without changing route ownership.
+
+#### Scenario: Collapse desktop sidebar
+
+- **GIVEN** the desktop sidebar is expanded
+- **WHEN** the user activates the sidebar collapse control
+- **THEN** the OpenSpec logo SHALL be hidden
+- **AND** navigation labels SHALL be hidden
+- **AND** navigation icons SHALL remain visible with accessible names
+- **AND** drag handles and drag/drop navigation affordances SHALL be hidden
+
+#### Scenario: Expand desktop sidebar
+
+- **GIVEN** the desktop sidebar is collapsed
+- **WHEN** the user activates the sidebar expand control
+- **THEN** the OpenSpec logo SHALL be visible
+- **AND** navigation labels SHALL be visible
+- **AND** drag/drop navigation affordances SHALL be available again
+
+### Requirement: Git Worktree Responsive Actions
+
+The UI SHALL render Git worktree handoff actions without causing horizontal overflow in narrow layouts.
+
+#### Scenario: Render compact worktree switch action
+
+- **GIVEN** the Git page lists other available worktrees
+- **WHEN** the worktree switch action is rendered
+- **THEN** the action SHALL be an icon-only button with an accessible name
+- **AND** the worktree summary and action SHALL wrap or reflow to fit narrow containers without omitting branch or path content
+- **AND** the action SHALL continue to use the existing worktree handoff behavior
