@@ -111,6 +111,18 @@ const createMockAdapter = () => ({
   getDashboardData: vi.fn().mockResolvedValue(undefined),
 })
 
+function createMockProjectRecoveryService(
+  status: Context['projectRecoveryService']['getCurrent'] extends () => infer T ? T : never = {
+    state: 'idle',
+  }
+): Context['projectRecoveryService'] {
+  return {
+    getCurrent: vi.fn(() => status),
+    subscribe: vi.fn(() => () => {}),
+    dispose: vi.fn(),
+  } as unknown as Context['projectRecoveryService']
+}
+
 const tempDirs: string[] = []
 const execFileAsync = promisify(execFile)
 
@@ -166,6 +178,7 @@ const createMockContext = (
   options: {
     projectDir?: string
     gitWorktreeHandoff?: Context['gitWorktreeHandoff']
+    projectRecoveryService?: Context['projectRecoveryService']
   } = {}
 ): Context => {
   const configManager = {
@@ -237,6 +250,7 @@ const createMockContext = (
     kernel: kernel as unknown as Context['kernel'],
     searchService: searchService as unknown as Context['searchService'],
     dashboardOverviewService,
+    projectRecoveryService: options.projectRecoveryService ?? createMockProjectRecoveryService(),
     gitWorktreeHandoff: options.gitWorktreeHandoff,
     watcher: undefined,
     projectDir,
@@ -248,6 +262,7 @@ const createCaller = (
   options: {
     projectDir?: string
     gitWorktreeHandoff?: Context['gitWorktreeHandoff']
+    projectRecoveryService?: Context['projectRecoveryService']
   } = {}
 ) => {
   return appRouter.createCaller({
@@ -265,6 +280,7 @@ describe('appRouter', () => {
       expect(typeof status.watcherEnabled).toBe('boolean')
       expect(typeof status.watcherGeneration).toBe('number')
       expect(typeof status.watcherReinitializeCount).toBe('number')
+      expect(status.projectRecovery).toEqual({ state: 'idle' })
     })
   })
 

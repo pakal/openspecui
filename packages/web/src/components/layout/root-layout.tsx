@@ -1,5 +1,6 @@
 import { CliHealthGate } from '@/components/cli-health-gate'
 import { GlobalArchiveModal } from '@/components/global-archive-modal'
+import { ProjectRecoveryGate } from '@/components/project-recovery-gate'
 import { ResizeHandle } from '@/components/terminal/resize-handle'
 import { isStaticMode } from '@/lib/static-mode'
 import { useNavLayout } from '@/lib/use-nav-controller'
@@ -29,6 +30,7 @@ export function RootLayout() {
       <div className="app-layout h-full">
         <DesktopSidebar />
         <div className="app-body flex min-h-0 flex-1 flex-col">
+          <ProjectRecoveryGate />
           <CliHealthGate />
           <MobileHeader />
           <div className="flex min-h-0 flex-1 flex-col">

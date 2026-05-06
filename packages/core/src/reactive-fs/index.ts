@@ -58,6 +58,7 @@ export {
   getWatcherRuntimeStatus,
   initWatcherPool,
   isWatcherPoolInitialized,
+  subscribeWatcherRuntimeStatus,
   type WatcherRuntimeStatus,
 } from './watcher-pool.js'
 
@@ -67,8 +68,11 @@ export {
   closeAllProjectWatchers,
   getProjectWatcher,
   type PathCallback,
+  type ProjectResidencyEvictionReason,
+  type ProjectResidencyStatus,
   type ProjectWatcherReinitializeReason,
   type ProjectWatcherRuntimeStatus,
+  type ProjectWatcherRuntimeStatusListener,
   type WatchEvent,
   type WatchEventType,
 } from './project-watcher.js'

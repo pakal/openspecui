@@ -42,6 +42,11 @@ describe('ProjectWatcher path liveness', () => {
     ;(watcher as unknown as { checkPathLiveness: () => void }).checkPathLiveness()
 
     expect(scheduleSpy).toHaveBeenCalledWith('missing-project-dir')
+    expect(watcher.runtimeStatus.projectResidency.state).toBe('evicted')
+    expect(watcher.runtimeStatus.projectResidency).toMatchObject({
+      state: 'evicted',
+      reason: 'missing-project-dir',
+    })
   })
 
   it('does not reinitialize when only mode changes (fingerprint ignores mode)', async () => {
@@ -95,5 +100,33 @@ describe('ProjectWatcher path liveness', () => {
     ;(watcher as unknown as { checkPathLiveness: () => void }).checkPathLiveness()
 
     expect(scheduleSpy).toHaveBeenCalledWith('project-dir-replaced')
+    expect(watcher.runtimeStatus.projectResidency).toMatchObject({
+      state: 'evicted',
+      reason: 'project-dir-replaced',
+    })
+  })
+
+  it('emits runtime status updates when project residency changes', async () => {
+    const root = await createTempRoot()
+    const projectDir = join(root, 'project')
+    await mkdir(projectDir, { recursive: true })
+
+    const watcher = new ProjectWatcher(projectDir)
+    ;(watcher as unknown as { initialized: boolean }).initialized = true
+    ;(watcher as unknown as { projectDirFingerprint: string | null }).projectDirFingerprint = '1:1'
+
+    const listener = vi.fn()
+    watcher.subscribeRuntimeStatus(listener)
+
+    await rm(projectDir, { recursive: true, force: true })
+    ;(watcher as unknown as { checkPathLiveness: () => void }).checkPathLiveness()
+
+    expect(listener).toHaveBeenCalled()
+    expect(listener.mock.calls.at(-1)?.[0]).toMatchObject({
+      projectResidency: {
+        state: 'evicted',
+        reason: 'missing-project-dir',
+      },
+    })
   })
 })

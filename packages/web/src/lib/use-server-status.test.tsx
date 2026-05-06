@@ -1,3 +1,4 @@
+import type { ProjectRecoveryStatus } from '@openspecui/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -9,6 +10,8 @@ type ConnectionState = {
 type ConnectionObserver = {
   next: (state: ConnectionState) => void
 }
+
+const idleRecovery: ProjectRecoveryStatus = { state: 'idle' }
 
 const modeState = vi.hoisted(() => ({ staticMode: false }))
 const observerRef = vi.hoisted(() => ({ observer: null as ConnectionObserver | null }))
@@ -52,11 +55,18 @@ describe('useServerStatus', () => {
     systemSubscribeMock.mockImplementation(
       (
         _input: undefined,
-        handlers: { onData: (data: { projectDir: string; watcherEnabled: boolean }) => void }
+        handlers: {
+          onData: (data: {
+            projectDir: string
+            watcherEnabled: boolean
+            projectRecovery: ProjectRecoveryStatus
+          }) => void
+        }
       ) => {
         handlers.onData({
           projectDir: '/tmp/opsx-project',
           watcherEnabled: true,
+          projectRecovery: idleRecovery,
         })
         return { unsubscribe: vi.fn() }
       }
@@ -68,6 +78,7 @@ describe('useServerStatus', () => {
     await waitFor(() => {
       expect(result.current.connected).toBe(true)
       expect(result.current.dirName).toBe('opsx-project')
+      expect(result.current.projectRecovery).toEqual(idleRecovery)
     })
 
     expect(getOrCreateWsClientInstanceMock).toHaveBeenCalled()

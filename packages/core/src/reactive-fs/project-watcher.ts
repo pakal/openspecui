@@ -64,13 +64,29 @@ export type ProjectWatcherReinitializeReason =
   | 'project-dir-replaced'
   | 'manual'
 
+export type ProjectResidencyEvictionReason = Extract<
+  ProjectWatcherReinitializeReason,
+  'missing-project-dir' | 'project-dir-replaced'
+>
+
+export type ProjectResidencyStatus =
+  | { state: 'active' }
+  | {
+      state: 'evicted'
+      reason: ProjectResidencyEvictionReason
+      detectedAt: number
+    }
+
 /** watcher 运行时状态（用于调试和运维观测） */
 export interface ProjectWatcherRuntimeStatus {
   generation: number
   reinitializeCount: number
   lastReinitializeReason: ProjectWatcherReinitializeReason | null
   reinitializeReasonCounts: Readonly<Record<ProjectWatcherReinitializeReason, number>>
+  projectResidency: ProjectResidencyStatus
 }
+
+export type ProjectWatcherRuntimeStatusListener = (status: ProjectWatcherRuntimeStatus) => void
 
 /**
  * 项目监听器
@@ -113,6 +129,8 @@ export class ProjectWatcher {
     'project-dir-replaced': 0,
     manual: 0,
   }
+  private projectResidency: ProjectResidencyStatus = { state: 'active' }
+  private runtimeStatusListeners = new Set<ProjectWatcherRuntimeStatusListener>()
 
   constructor(
     projectDir: string,
@@ -161,7 +179,9 @@ export class ProjectWatcher {
     this.initialized = true
     this.generation += 1
     this.projectDirFingerprint = this.getProjectDirFingerprint()
+    this.projectResidency = { state: 'active' }
     this.startPathLivenessMonitor()
+    this.emitRuntimeStatus()
   }
 
   /**
@@ -253,6 +273,7 @@ export class ProjectWatcher {
     const current = this.getProjectDirFingerprint()
 
     if (current === null) {
+      this.markProjectResidencyEvicted('missing-project-dir')
       console.warn('[ProjectWatcher] Project directory missing, scheduling reinitialize...')
       this.scheduleReinitialize('missing-project-dir')
       return
@@ -260,13 +281,18 @@ export class ProjectWatcher {
 
     if (this.projectDirFingerprint === null) {
       this.projectDirFingerprint = current
+      this.markProjectResidencyActive()
       return
     }
 
     if (current !== this.projectDirFingerprint) {
+      this.markProjectResidencyEvicted('project-dir-replaced')
       console.warn('[ProjectWatcher] Project directory replaced, scheduling reinitialize...')
       this.scheduleReinitialize('project-dir-replaced')
+      return
     }
+
+    this.markProjectResidencyActive()
   }
 
   /**
@@ -410,6 +436,21 @@ export class ProjectWatcher {
       reinitializeCount: this.reinitializeCount,
       lastReinitializeReason: this.lastReinitializeReason,
       reinitializeReasonCounts: { ...this.reinitializeReasonCounts },
+      projectResidency: { ...this.projectResidency },
+    }
+  }
+
+  subscribeRuntimeStatus(
+    listener: ProjectWatcherRuntimeStatusListener,
+    options: { emitCurrent?: boolean } = {}
+  ): () => void {
+    this.runtimeStatusListeners.add(listener)
+    if (options.emitCurrent !== false) {
+      listener(this.runtimeStatus)
+    }
+
+    return () => {
+      this.runtimeStatusListeners.delete(listener)
     }
   }
 
@@ -420,6 +461,40 @@ export class ProjectWatcher {
     this.reinitializeCount += 1
     this.lastReinitializeReason = reason
     this.reinitializeReasonCounts[reason] += 1
+    this.emitRuntimeStatus()
+  }
+
+  private markProjectResidencyActive(): void {
+    if (this.projectResidency.state === 'active') {
+      return
+    }
+
+    this.projectResidency = { state: 'active' }
+    this.emitRuntimeStatus()
+  }
+
+  private markProjectResidencyEvicted(reason: ProjectResidencyEvictionReason): void {
+    if (this.projectResidency.state === 'evicted' && this.projectResidency.reason === reason) {
+      return
+    }
+
+    this.projectResidency = {
+      state: 'evicted',
+      reason,
+      detectedAt: Date.now(),
+    }
+    this.emitRuntimeStatus()
+  }
+
+  private emitRuntimeStatus(): void {
+    const status = this.runtimeStatus
+    for (const listener of this.runtimeStatusListeners) {
+      try {
+        listener(status)
+      } catch (error) {
+        console.error('[ProjectWatcher] Runtime status listener failed:', error)
+      }
+    }
   }
 
   /**
@@ -440,6 +515,7 @@ export class ProjectWatcher {
     this.initialized = false
     this.initPromise = null
     this.projectDirFingerprint = null
+    this.emitRuntimeStatus()
 
     if (!existsSync(this.projectDir)) {
       console.warn(
@@ -516,6 +592,8 @@ export class ProjectWatcher {
     this.initialized = false
     this.initPromise = null
     this.projectDirFingerprint = null
+    this.projectResidency = { state: 'active' }
+    this.emitRuntimeStatus()
   }
 }
 

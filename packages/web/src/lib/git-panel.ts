@@ -1,5 +1,5 @@
 import type { DashboardGitEntry, GitEntrySelector, GitWorktreeHandoff } from '@openspecui/core'
-import { getHostedApiBootstrapState } from './hosted-session'
+import { buildServerHandoffHref } from './server-handoff'
 
 export const GIT_ENTRY_PAGE_SIZE = 50
 
@@ -33,21 +33,5 @@ export function buildGitWorktreeHandoffHref(options: {
   handoff: GitWorktreeHandoff
   location: Pick<Location, 'href' | 'pathname' | 'search' | 'hash'>
 }): string {
-  const { handoff, location } = options
-  const currentUrl = new URL(location.href)
-  const hostedState = getHostedApiBootstrapState({
-    pathname: location.pathname,
-    search: location.search,
-  })
-
-  if (hostedState.hosted) {
-    currentUrl.searchParams.set('api', handoff.serverUrl)
-    return currentUrl.toString()
-  }
-
-  const targetUrl = new URL(handoff.serverUrl)
-  targetUrl.pathname = currentUrl.pathname
-  targetUrl.search = currentUrl.search
-  targetUrl.hash = currentUrl.hash
-  return targetUrl.toString()
+  return buildServerHandoffHref(options)
 }

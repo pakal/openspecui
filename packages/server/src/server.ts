@@ -46,6 +46,7 @@ const SERVER_PACKAGE_VERSION = getServerPackageVersion()
 import { DashboardOverviewService } from './dashboard-overview-service.js'
 import { loadDashboardOverview } from './dashboard-overview.js'
 import { findAvailablePort } from './port-utils.js'
+import { ProjectRecoveryService } from './project-recovery-service.js'
 import { PtyManager } from './pty-manager.js'
 import { createPtyWebSocketHandler } from './pty-websocket.js'
 import { appRouter, type Context, type GitWorktreeHandoffService } from './router.js'
@@ -92,6 +93,10 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
       ),
     watcher
   )
+  const projectRecoveryService = new ProjectRecoveryService({
+    projectDir: config.projectDir,
+    gitWorktreeHandoff: config.gitWorktreeHandoff,
+  })
 
   const app = new Hono()
 
@@ -130,6 +135,7 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
         kernel,
         searchService,
         dashboardOverviewService,
+        projectRecoveryService,
         gitWorktreeHandoff: config.gitWorktreeHandoff,
         watcher,
         projectDir: config.projectDir,
@@ -146,6 +152,7 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
     kernel,
     searchService,
     dashboardOverviewService,
+    projectRecoveryService,
     gitWorktreeHandoff: config.gitWorktreeHandoff,
     watcher,
     projectDir: config.projectDir,
@@ -159,6 +166,7 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
     kernel,
     searchService,
     dashboardOverviewService,
+    projectRecoveryService,
     watcher,
     createContext,
     port: config.port ?? 3100,
@@ -239,6 +247,7 @@ export async function createWebSocketServer(
       server.watcher?.stop()
       server.searchService.dispose().catch(() => {})
       server.dashboardOverviewService.dispose()
+      server.projectRecoveryService.dispose()
     },
   }
 }

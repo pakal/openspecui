@@ -14,11 +14,8 @@ import {
   persistDashboardGitAutoRefreshPreset,
   type DashboardGitAutoRefreshPreset,
 } from '@/lib/dashboard-git'
-import {
-  buildGitEntryHrefFromEntry,
-  buildGitWorktreeHandoffHref,
-  GIT_ENTRY_PAGE_SIZE,
-} from '@/lib/git-panel'
+import { buildGitEntryHrefFromEntry, GIT_ENTRY_PAGE_SIZE } from '@/lib/git-panel'
+import { navigateToServerHandoff } from '@/lib/server-handoff'
 import { isStaticMode } from '@/lib/static-mode'
 import { trpcClient } from '@/lib/trpc'
 import {
@@ -211,12 +208,10 @@ export function GitRoute() {
       setSwitchingWorktreePath(worktree.path)
       try {
         const handoff = await switchWorktreeMutation.mutateAsync(worktree.path)
-        window.location.assign(
-          buildGitWorktreeHandoffHref({
-            handoff,
-            location: window.location,
-          })
-        )
+        navigateToServerHandoff({
+          handoff,
+          location: window.location,
+        })
       } catch (error) {
         console.error('[GitRoute] Failed to switch worktree:', error)
         window.alert(error instanceof Error ? error.message : 'Failed to switch worktree.')

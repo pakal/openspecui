@@ -1,3 +1,4 @@
+import type { ProjectRecoveryStatus } from '@openspecui/core'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { isStaticMode } from './static-mode'
 import { getOrCreateWsClientInstance, trpcClient, WS_RETRY_DELAY_MS } from './trpc'
@@ -7,6 +8,7 @@ export interface ServerStatus {
   projectDir: string | null
   dirName: string | null
   watcherEnabled: boolean
+  projectRecovery: ProjectRecoveryStatus
   error: string | null
   /** WebSocket 连接状态 */
   wsState: 'idle' | 'connecting' | 'pending'
@@ -23,6 +25,7 @@ export function useServerStatus(): ServerStatus {
     projectDir: null,
     dirName: null,
     watcherEnabled: false,
+    projectRecovery: { state: 'idle' },
     error: null,
     wsState: 'idle',
     reconnectCountdown: null,
@@ -122,6 +125,7 @@ export function useServerStatus(): ServerStatus {
         projectDir: 'Static Export',
         dirName: 'Static Export',
         watcherEnabled: false,
+        projectRecovery: { state: 'idle' },
         error: null,
       }))
       document.title = 'OpenSpec UI (Static)'
@@ -139,6 +143,7 @@ export function useServerStatus(): ServerStatus {
           projectDir,
           dirName,
           watcherEnabled: data.watcherEnabled,
+          projectRecovery: data.projectRecovery,
           error: null,
         }))
 

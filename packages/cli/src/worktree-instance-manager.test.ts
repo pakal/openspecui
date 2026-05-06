@@ -15,9 +15,11 @@ async function createWorkspaceFixture(): Promise<{ repoRoot: string; runtimeDir:
   tempDirs.push(repoRoot)
 
   await mkdir(join(repoRoot, 'packages', 'cli', 'src'), { recursive: true })
+  await mkdir(join(repoRoot, 'packages', 'cli', 'dist'), { recursive: true })
   await writeFile(join(repoRoot, 'package.json'), '{}\n', 'utf8')
   await writeFile(join(repoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf8')
   await writeFile(join(repoRoot, 'packages', 'cli', 'src', 'cli.ts'), '// test\n', 'utf8')
+  await writeFile(join(repoRoot, 'packages', 'cli', 'dist', 'cli.mjs'), '// test\n', 'utf8')
 
   return {
     repoRoot,
@@ -35,8 +37,30 @@ describe('worktree instance manager helpers', () => {
     })
   })
 
-  it('returns the workspace pnpm command when developing inside the monorepo', async () => {
+  it('prefers the built CLI entry when developing inside the monorepo', async () => {
     const fixture = await createWorkspaceFixture()
+
+    const command = createWorktreeServerCommand({
+      runtimeDir: fixture.runtimeDir,
+      projectDir: '/tmp/feature-worktree',
+      port: 3123,
+    })
+
+    expect(command.command).toBe(process.execPath)
+    expect(command.args).toEqual([
+      join(fixture.repoRoot, 'packages', 'cli', 'dist', 'cli.mjs'),
+      'start',
+      '/tmp/feature-worktree',
+      '--port',
+      '3123',
+      '--no-open',
+    ])
+    expect(command.cwd).toBe(fixture.repoRoot)
+  })
+
+  it('falls back to the workspace pnpm command when the local CLI build is unavailable', async () => {
+    const fixture = await createWorkspaceFixture()
+    await rm(join(fixture.repoRoot, 'packages', 'cli', 'dist'), { recursive: true, force: true })
 
     const command = createWorktreeServerCommand({
       runtimeDir: fixture.runtimeDir,
