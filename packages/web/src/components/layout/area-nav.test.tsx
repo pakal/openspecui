@@ -86,4 +86,25 @@ describe('AreaNav drag behavior', () => {
 
     expect(dragStart.defaultPrevented).toBe(true)
   })
+
+  it('renders icon-only non-draggable items when collapsed', () => {
+    const { container } = render(<AreaNav area="main" tabs={['/dashboard', '/config']} collapsed />)
+
+    expect(within(container).getByRole('link', { name: 'Dashboard' })).toBeTruthy()
+    expect(within(container).getByRole('link', { name: 'Config' })).toBeTruthy()
+    expect(container.textContent).not.toContain('Dashboard')
+    expect(container.textContent).not.toContain('Config')
+
+    const listItems = container.querySelectorAll('li')
+    expect(listItems).toHaveLength(2)
+    for (const li of listItems) {
+      expect(li.getAttribute('draggable')).toBe('false')
+    }
+
+    const list = container.querySelector('ul')
+    expect(list).toBeTruthy()
+    const dragOver = createEvent.dragOver(list!)
+    fireEvent(list!, dragOver)
+    expect(dragOver.defaultPrevented).toBe(false)
+  })
 })

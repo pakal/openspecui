@@ -22,6 +22,7 @@ const {
   gitTaskStatusMock,
   staticModeMock,
   navPushMock,
+  navigateToServerHandoffMock,
 } = vi.hoisted(() => ({
   overviewQueryMock: vi.fn(),
   listEntriesQueryMock: vi.fn(),
@@ -29,6 +30,7 @@ const {
   gitTaskStatusMock: vi.fn(),
   staticModeMock: vi.fn(() => false),
   navPushMock: vi.fn(),
+  navigateToServerHandoffMock: vi.fn(),
 }))
 
 vi.mock('@/lib/trpc', () => ({
@@ -51,6 +53,10 @@ vi.mock('@/lib/static-mode', () => ({
   isStaticMode: staticModeMock,
 }))
 
+vi.mock('@/lib/server-handoff', () => ({
+  navigateToServerHandoff: navigateToServerHandoffMock,
+}))
+
 vi.mock('@/lib/nav-controller', () => ({
   navController: {
     push: navPushMock,
@@ -64,7 +70,27 @@ vi.mock('@/lib/use-dashboard', () => ({
 }))
 
 vi.mock('@/components/git/git-shared', () => ({
+  GIT_WORKTREE_BG_CLASS: 'bg-worktree-current',
+  GIT_WORKTREE_BORDER_CLASS: 'border-worktree-current',
+  copyText: vi.fn(() => Promise.resolve()),
+  isHttpUrl: (value: string) => /^https?:\/\//.test(value),
+  DiffStat: ({
+    diff,
+    className,
+  }: {
+    diff: { insertions: number; deletions: number }
+    className?: string
+  }) => (
+    <span className={className}>
+      +{diff.insertions}/-{diff.deletions}
+    </span>
+  ),
   GitAutoRefreshPresetIcon: () => <span data-testid="git-refresh-icon">icon</span>,
+  GitAheadBehindBadge: ({ ahead, behind }: { ahead: number; behind: number }) => (
+    <span>
+      ahead {ahead} behind {behind}
+    </span>
+  ),
   getGitEntrySharedDescriptor: (entry: { type: string; hash?: string }) => ({
     family: 'git',
     entityId: entry.type === 'commit' ? (entry.hash ?? 'unknown') : 'uncommitted',
@@ -88,6 +114,7 @@ vi.mock('@/components/git/git-shared', () => ({
       {entry.title}
     </button>
   ),
+  GitFilesBadge: ({ files }: { files: number }) => <span>{files} files</span>,
   WorktreeRow: ({ worktree }: { worktree: { path: string } }) => <div>{worktree.path}</div>,
 }))
 
@@ -238,5 +265,52 @@ describe('GitRoute', () => {
         }),
       })
     )
+  })
+
+  it('uses an accessible icon button for worktree switching', async () => {
+    const handoff = {
+      serverUrl: 'http://127.0.0.1:3200',
+    }
+    switchWorktreeMock.mockResolvedValueOnce(handoff)
+    overviewQueryMock.mockResolvedValueOnce({
+      ...overviewData,
+      otherWorktrees: [
+        {
+          path: '/repo-feature',
+          relativePath: '../repo-feature',
+          pathAvailable: true,
+          branchName: 'feature/responsive-shell',
+          detached: false,
+          isCurrent: false,
+          ahead: 2,
+          behind: 0,
+          diff: { files: 3, insertions: 12, deletions: 4 },
+          entries: [],
+        },
+      ],
+    })
+
+    renderWithQueryClient(<GitRoute />)
+
+    await waitFor(() => {
+      expect(screen.getByText('/repo-feature')).toBeTruthy()
+    })
+
+    const switchButton = screen.getByRole('button', {
+      name: 'Switch to feature/responsive-shell',
+    })
+    expect(switchButton.textContent).toBe('')
+
+    fireEvent.click(switchButton)
+
+    await waitFor(() => {
+      expect(switchWorktreeMock).toHaveBeenCalledWith({ path: '/repo-feature' })
+    })
+    await waitFor(() => {
+      expect(navigateToServerHandoffMock).toHaveBeenCalledWith({
+        handoff,
+        location: window.location,
+      })
+    })
   })
 })

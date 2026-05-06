@@ -5,7 +5,9 @@ import {
   GitEntryRow,
   WorktreeRow,
 } from '@/components/git/git-shared'
+import { WorktreeCard } from '@/components/git/git-worktree-card'
 import { Select, type SelectOption } from '@/components/select'
+import { Tooltip } from '@/components/tooltip'
 import {
   getDashboardGitAutoRefreshIntervalMs,
   getDashboardGitAutoRefreshProgress,
@@ -27,7 +29,14 @@ import { vtNavController } from '@/lib/view-transitions/navigation'
 import { withSharedElementHandoffState } from '@/lib/view-transitions/shared-elements'
 import type { GitWorktreeSummary } from '@openspecui/core'
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertCircle, ArrowRightLeft, FileCode2, GitBranch, RefreshCw } from 'lucide-react'
+import {
+  AlertCircle,
+  ArrowRightLeft,
+  FileCode2,
+  GitBranch,
+  LoaderCircle,
+  RefreshCw,
+} from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const GIT_AUTO_REFRESH_OPTIONS: SelectOption<DashboardGitAutoRefreshPreset>[] = [
@@ -510,40 +519,46 @@ export function GitRoute() {
       </section>
 
       {otherWorktrees.length > 0 ? (
-        <section className="space-y-3">
+        <section className="min-w-0 space-y-3">
           <div className="flex items-center gap-2">
             <ArrowRightLeft className="h-4 w-4 shrink-0" />
             <h2 className="font-medium">Other Worktrees</h2>
           </div>
-          <div className="grid gap-3 lg:grid-cols-2">
+          <div className="grid min-w-0 gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr))]">
             {otherWorktrees.map((worktree) => (
-              <div key={worktree.path} className="space-y-2">
-                <WorktreeRow
-                  worktree={worktree}
-                  emphasize={false}
-                  removing={removingWorktreePath === worktree.path}
-                  onRemoveDetachedWorktree={handleRemoveDetachedWorktree}
-                />
-                <div className="flex justify-end">
-                  {worktree.pathAvailable ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void handleSwitchWorktree(worktree)
-                      }}
-                      disabled={switchingWorktreePath === worktree.path}
-                      className="bg-primary text-primary-foreground inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-70"
-                    >
-                      <ArrowRightLeft className="h-3.5 w-3.5" />
-                      {switchingWorktreePath === worktree.path ? 'Switching…' : 'Switch worktree'}
-                    </button>
+              <WorktreeCard
+                key={worktree.path}
+                worktree={worktree}
+                emphasize={false}
+                removing={removingWorktreePath === worktree.path}
+                onRemoveDetachedWorktree={handleRemoveDetachedWorktree}
+                action={
+                  worktree.pathAvailable ? (
+                    <Tooltip content={`Switch to ${worktree.branchName}`} sideOffset={8}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleSwitchWorktree(worktree)
+                        }}
+                        disabled={switchingWorktreePath === worktree.path}
+                        className="bg-primary text-primary-foreground inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-70"
+                        title={`Switch to ${worktree.branchName}`}
+                        aria-label={`Switch to ${worktree.branchName}`}
+                      >
+                        {switchingWorktreePath === worktree.path ? (
+                          <LoaderCircle className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <ArrowRightLeft className="h-4 w-4" />
+                        )}
+                      </button>
+                    </Tooltip>
                   ) : (
                     <span className="text-muted-foreground rounded-md border border-dashed px-2.5 py-1 text-[11px]">
                       Path missing
                     </span>
-                  )}
-                </div>
-              </div>
+                  )
+                }
+              />
             ))}
           </div>
         </section>
