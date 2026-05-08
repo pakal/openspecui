@@ -1,5 +1,12 @@
 # @openspecui/server
 
+## 3.1.1
+
+### Patch Changes
+
+- @openspecui/core@3.1.1
+- @openspecui/search@3.1.1
+
 ## 3.1.0
 
 ### Minor Changes

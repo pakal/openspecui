@@ -1,5 +1,11 @@
 # @openspecui/app
 
+## 3.1.1
+
+### Patch Changes
+
+- 86e9a8c: Harden hosted app shell upgrade flow so service-worker cache revisions follow shell content, idle shells auto-apply waiting updates, and legacy `?version=` launch semantics stay retired.
+
 ## 3.1.0
 
 ### Minor Changes
