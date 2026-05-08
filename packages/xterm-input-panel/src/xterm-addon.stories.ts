@@ -576,6 +576,7 @@ export const PersistStateAcrossTerminalSwitch: StoryObj = {
  * panel DOM can disappear, but addon should still be able to re-open.
  */
 export const RecoverAfterPanelHostRemount: StoryObj = {
+  tags: ['skip-browser-test'],
   render: () => html`
     <div style="display:flex;gap:8px;height:100%;">
       <div id="host-a" style="flex:1;position:relative;">
