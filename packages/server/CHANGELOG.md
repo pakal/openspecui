@@ -1,5 +1,17 @@
 # @openspecui/server
 
+## 3.4.0
+
+### Minor Changes
+
+- f9b63a0: Add terminal shell profiles and data-driven spawn commands with shared create-terminal flows.
+
+### Patch Changes
+
+- Updated dependencies [f9b63a0]
+  - @openspecui/core@3.4.0
+  - @openspecui/search@3.4.0
+
 ## 3.3.0
 
 ### Minor Changes
