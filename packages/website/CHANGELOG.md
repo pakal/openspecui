@@ -1,5 +1,17 @@
 # @openspecui/website
 
+## 3.4.0
+
+### Minor Changes
+
+- 23d9e26: Migrate the public website to SvelteKit static generation, add hooks documentation, build-time Shiki highlighting, and light/dark/system theme switching.
+
+### Patch Changes
+
+- a3d1d1a: Fix hooks documentation to match the shipped hooks API, and generalize website
+  syntax highlighting so `.svx` documentation code fences share the same
+  build-time Shiki pipeline as hook examples.
+
 ## 3.3.0
 
 ## 3.2.3
