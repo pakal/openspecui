@@ -1,5 +1,11 @@
 # xterm-input-panel
 
+## 1.2.4
+
+### Patch Changes
+
+- 5e63308: Fix mobile floating input panel chrome and settings switch semantics.
+
 ## 1.2.3
 
 ### Patch Changes

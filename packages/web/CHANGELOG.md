@@ -1,5 +1,11 @@
 # @openspecui/web
 
+## 3.5.2
+
+### Patch Changes
+
+- 5e63308: Fix mobile floating input panel chrome and settings switch semantics.
+
 ## 3.5.1
 
 ### Patch Changes
