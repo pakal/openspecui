@@ -1,5 +1,11 @@
 # @openspecui/core
 
+## 3.6.0
+
+### Minor Changes
+
+- 30d7af0: Render spec detail pages from processed Markdown while using parsed OpenSpec structure as semantic enhancement data.
+
 ## 3.5.2
 
 ## 3.5.1
