@@ -16,6 +16,7 @@ import type {
 import {
   CodeEditorThemeSchema,
   DashboardConfigSchema,
+  DocumentTranslationConfigSchema,
   getAllTools,
   getAvailableTools,
   getConfiguredTools,
@@ -70,6 +71,7 @@ import {
   type DashboardGitTaskStatus,
 } from './dashboard-overview.js'
 import type { DocumentService } from './document-service.js'
+import { buildEntityReadOptions } from './entity-read-options.js'
 import {
   buildGitWorktreeOverview,
   getCurrentWorktreeGitEntryFiles,
@@ -632,11 +634,23 @@ export const archiveRouter = router({
   }),
 
   get: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    return ctx.documentService.readArchivedChange(input.id)
+    return ctx.documentService.readEntityDetail(
+      'archive',
+      input.id,
+      'view',
+      'processed',
+      await buildEntityReadOptions(ctx, 'archive', input.id)
+    )
   }),
 
   getRaw: publicProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
-    return ctx.adapter.readArchivedChangeRaw(input.id)
+    return ctx.documentService.readEntityDetail(
+      'archive',
+      input.id,
+      'view',
+      'source',
+      await buildEntityReadOptions(ctx, 'archive', input.id)
+    )
   }),
 
   // Reactive subscriptions
@@ -647,17 +661,30 @@ export const archiveRouter = router({
   subscribeOne: publicProcedure
     .input(z.object({ id: z.string() }))
     .subscription(({ ctx, input }) => {
-      return createReactiveSubscriptionWithInput((id: string) =>
-        ctx.documentService.readArchivedChange(id)
+      return createReactiveSubscriptionWithInput(async (id: string) =>
+        ctx.documentService.readEntityDetail(
+          'archive',
+          id,
+          'view',
+          'processed',
+          await buildEntityReadOptions(ctx, 'archive', id)
+        )
       )(input.id)
     }),
 
   subscribeFiles: publicProcedure
     .input(z.object({ id: z.string() }))
     .subscription(({ ctx, input }) => {
-      return createReactiveSubscriptionWithInput((id: string) =>
-        ctx.adapter.readArchivedChangeFiles(id)
-      )(input.id)
+      return createReactiveSubscriptionWithInput(async (id: string) => {
+        const entity = await ctx.documentService.readEntityDetail(
+          'archive',
+          id,
+          'view',
+          'processed',
+          await buildEntityReadOptions(ctx, 'archive', id)
+        )
+        return entity?.files ?? []
+      })(input.id)
     }),
 })
 
@@ -797,6 +824,7 @@ export const configRouter = router({
         dashboard: DashboardConfigSchema.partial().optional(),
         git: GitConfigSchema.partial().optional(),
         notifications: NotificationSettingsSchema.partial().optional(),
+        translation: DocumentTranslationConfigSchema.partial().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -815,7 +843,8 @@ export const configRouter = router({
           input.terminal !== undefined ||
           input.dashboard !== undefined ||
           input.git !== undefined ||
-          input.notifications !== undefined
+          input.notifications !== undefined ||
+          input.translation !== undefined
         ) {
           await ctx.configManager.writeConfig({
             theme: input.theme,
@@ -826,6 +855,7 @@ export const configRouter = router({
             dashboard: input.dashboard,
             git: input.git,
             notifications: input.notifications,
+            translation: input.translation,
           })
         }
         return { success: true }
@@ -1406,7 +1436,12 @@ export const opsxRouter = router({
     .query(async ({ ctx, input }) => {
       await ctx.kernel.waitForWarmup()
       await ctx.kernel.ensureArtifactOutput(input.changeId, input.outputPath)
-      return ctx.kernel.getArtifactOutput(input.changeId, input.outputPath)
+      return ctx.documentService.readChangeArtifactOutput(
+        input.changeId,
+        input.outputPath,
+        'view',
+        'processed'
+      )
     }),
 
   subscribeArtifactOutput: publicProcedure
@@ -1415,7 +1450,12 @@ export const opsxRouter = router({
       return createReactiveSubscription(async () => {
         await ctx.kernel.waitForWarmup()
         await ctx.kernel.ensureArtifactOutput(input.changeId, input.outputPath)
-        return ctx.kernel.getArtifactOutput(input.changeId, input.outputPath)
+        return ctx.documentService.readChangeArtifactOutput(
+          input.changeId,
+          input.outputPath,
+          'view',
+          'processed'
+        )
       })
     }),
 
@@ -1424,7 +1464,12 @@ export const opsxRouter = router({
     .query(async ({ ctx, input }) => {
       await ctx.kernel.waitForWarmup()
       await ctx.kernel.ensureGlobArtifactFiles(input.changeId, input.outputPath)
-      return ctx.kernel.getGlobArtifactFiles(input.changeId, input.outputPath)
+      return ctx.documentService.readChangeGlobArtifactFiles(
+        input.changeId,
+        input.outputPath,
+        'view',
+        'processed'
+      )
     }),
 
   subscribeGlobArtifactFiles: publicProcedure
@@ -1433,7 +1478,12 @@ export const opsxRouter = router({
       return createReactiveSubscription(async () => {
         await ctx.kernel.waitForWarmup()
         await ctx.kernel.ensureGlobArtifactFiles(input.changeId, input.outputPath)
-        return ctx.kernel.getGlobArtifactFiles(input.changeId, input.outputPath)
+        return ctx.documentService.readChangeGlobArtifactFiles(
+          input.changeId,
+          input.outputPath,
+          'view',
+          'processed'
+        )
       })
     }),
 

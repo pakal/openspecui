@@ -1,5 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
 import { join } from 'path'
+import {
+  buildOpsxEntityDetail,
+  type OpsxEntityDetail,
+  type OpsxEntityReadOptions,
+} from './opsx-entity.js'
 import { MarkdownParser } from './parser.js'
 import { reactiveReadDir, reactiveReadFile, reactiveStat } from './reactive-fs/index.js'
 import type { Change, ChangeFile, DeltaSpec, Spec } from './schemas.js'
@@ -160,12 +165,11 @@ export class OpenSpecAdapter {
     const ids = await this.listArchivedChanges()
     const results = await Promise.all(
       ids.map(async (id) => {
-        const change = await this.readArchivedChange(id)
         const archiveDir = join(this.archiveDir, id)
         const timeInfo = await this.getFileTimeInfo(archiveDir)
         return {
           id,
-          name: change?.name ?? id,
+          name: id,
           createdAt: timeInfo?.createdAt ?? 0,
           updatedAt: timeInfo?.updatedAt ?? 0,
         }
@@ -234,6 +238,26 @@ export class OpenSpecAdapter {
   async readArchivedChangeFiles(changeId: string): Promise<ChangeFile[]> {
     const archiveRoot = join(this.archiveDir, changeId)
     return this.readFilesUnderRoot(archiveRoot)
+  }
+
+  async readEntityDetail(
+    stage: 'change' | 'archive',
+    id: string,
+    options: OpsxEntityReadOptions = {}
+  ): Promise<OpsxEntityDetail | null> {
+    const root = stage === 'change' ? join(this.changesDir, id) : join(this.archiveDir, id)
+    const files = await this.readFilesUnderRoot(root)
+    if (files.length === 0) {
+      const statInfo = await reactiveStat(root)
+      if (!statInfo?.isDirectory) return null
+    }
+    return buildOpsxEntityDetail({
+      stage,
+      id,
+      files,
+      schemas: options.schemas,
+      schemaDiagnostics: options.schemaDiagnostics,
+    })
   }
 
   private async readFilesUnderRoot(root: string): Promise<ChangeFile[]> {
