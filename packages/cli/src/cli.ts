@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import yargs from 'yargs'
-import { hideBin } from 'yargs/helpers'
 import type { ExportFormat } from './export.js'
+import { getCliArgs } from './argv.js'
 import { exportStaticSite } from './export.js'
 import { buildHostedAppLaunchUrl, resolveEffectiveHostedAppBaseUrl } from './hosted-app.js'
 import { startServer } from './index.js'
@@ -39,8 +39,9 @@ function buildHostedCorsOrigins(baseUrl: string): string[] {
 
 async function main(): Promise<void> {
   const originalCwd = process.env.INIT_CWD || process.cwd()
+  const args = getCliArgs(process.argv)
 
-  await yargs(hideBin(process.argv))
+  await yargs(args)
     .scriptName('openspecui')
     .command(
       ['$0 [project-dir]', 'start [project-dir]'],
