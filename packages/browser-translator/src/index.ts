@@ -19,6 +19,38 @@ export interface BrowserTranslationStatus {
   message?: string
 }
 
+export interface BrowserTranslationAvailabilityRow {
+  sourceLanguage: string
+  targetLanguage: string
+  availability: BrowserTranslationAvailability
+  progress?: number
+  message?: string
+}
+
+export interface BrowserTranslationSupportTable {
+  targetLanguage: string
+  checked: number
+  total: number
+  updatedAt: number
+  rows: BrowserTranslationAvailabilityRow[]
+}
+
+export interface BrowserTranslationPrepareOptions {
+  sourceLanguage?: string
+  signal: AbortSignal
+  onStatus?: (status: BrowserTranslationStatus) => void
+  win?: Window
+}
+
+export interface BrowserTranslationSupportScanOptions {
+  sourceLanguages: readonly string[]
+  targetLanguage: string
+  signal: AbortSignal
+  win?: Window
+  onRow?: (row: BrowserTranslationAvailabilityRow) => void
+  onProgress?: (input: { checked: number; total: number }) => void
+}
+
 interface NativeTranslator {
   translate(input: string, options?: { signal?: AbortSignal }): Promise<string>
   destroy?: () => void
@@ -59,6 +91,137 @@ export async function probeBrowserTranslator(
     return { availability: normalizeAvailability(availability) }
   } catch (error) {
     return { availability: 'error', message: getErrorMessage(error) }
+  }
+}
+
+export async function scanBrowserTranslationSupportTable(
+  options: BrowserTranslationSupportScanOptions
+): Promise<BrowserTranslationSupportTable> {
+  const win = options.win ?? window
+  const translator = (win as WindowWithTranslator).Translator
+  if (!translator) {
+    return {
+      targetLanguage: options.targetLanguage,
+      checked: 0,
+      total: options.sourceLanguages.length,
+      updatedAt: Date.now(),
+      rows: [],
+    }
+  }
+
+  const rows: BrowserTranslationAvailabilityRow[] = []
+  let checked = 0
+  const total = options.sourceLanguages.length
+
+  for (const sourceLanguage of options.sourceLanguages) {
+    if (options.signal.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError')
+    }
+    if (sourceLanguage === options.targetLanguage) {
+      checked += 1
+      options.onProgress?.({ checked, total })
+      continue
+    }
+    let row: BrowserTranslationAvailabilityRow
+    try {
+      const availability = await translator.availability({
+        sourceLanguage,
+        targetLanguage: options.targetLanguage,
+      })
+      row = {
+        sourceLanguage,
+        targetLanguage: options.targetLanguage,
+        availability: normalizeAvailability(availability),
+      }
+    } catch (error) {
+      row = {
+        sourceLanguage,
+        targetLanguage: options.targetLanguage,
+        availability: 'error',
+        message: getErrorMessage(error),
+      }
+    }
+    checked += 1
+    if (row.availability !== 'unavailable') rows.push(row)
+    options.onRow?.(row)
+    options.onProgress?.({ checked, total })
+  }
+
+  return {
+    targetLanguage: options.targetLanguage,
+    checked,
+    total,
+    updatedAt: Date.now(),
+    rows,
+  }
+}
+
+export async function prepareBrowserTranslator(
+  targetLanguage: string,
+  options: BrowserTranslationPrepareOptions
+): Promise<BrowserTranslationStatus> {
+  const sourceLanguage = options.sourceLanguage ?? DEFAULT_SOURCE_LANGUAGE
+  const win = options.win ?? window
+  const translator = (win as WindowWithTranslator).Translator
+  if (!translator) {
+    return { availability: 'missing', message: 'Browser Translator API is not exposed.' }
+  }
+
+  try {
+    const initialStatus = await probeBrowserTranslator(targetLanguage, sourceLanguage, win)
+    if (
+      initialStatus.availability === 'missing' ||
+      initialStatus.availability === 'unavailable' ||
+      initialStatus.availability === 'error'
+    ) {
+      options.onStatus?.(initialStatus)
+      return initialStatus
+    }
+    if (initialStatus.availability === 'available') {
+      options.onStatus?.(initialStatus)
+      return initialStatus
+    }
+
+    options.onStatus?.({
+      availability: 'downloading',
+      message: 'Downloading browser translation support.',
+    })
+
+    const native = await raceAbort(
+      translator.create({
+        sourceLanguage,
+        targetLanguage,
+        signal: options.signal,
+        monitor: (monitor) =>
+          monitorDownload(monitor, {
+            setStatus(input) {
+              options.onStatus?.({
+                availability: 'downloading',
+                progress: input.progress,
+                message: input.message,
+              })
+            },
+          }),
+      }),
+      options.signal
+    )
+    native.destroy?.()
+
+    const finalStatus = { availability: 'available' as const, message: 'Browser translator is ready.' }
+    options.onStatus?.(finalStatus)
+    return finalStatus
+  } catch (error) {
+    if (options.signal.aborted) {
+      const cancelledStatus = {
+        availability: 'downloadable' as const,
+        message: 'Browser translation download was cancelled.',
+      }
+      options.onStatus?.(cancelledStatus)
+      return cancelledStatus
+    }
+    const failureStatus = { availability: 'error' as const, message: getErrorMessage(error) }
+    options.onStatus?.(failureStatus)
+    return failureStatus
   }
 }
 
