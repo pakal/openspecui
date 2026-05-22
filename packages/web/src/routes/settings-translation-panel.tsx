@@ -92,6 +92,8 @@ const BROWSER_ACTIONABLE_AVAILABILITIES = new Set<BrowserTranslationAvailability
   'downloadable',
 ])
 
+type DownloadStateChipTone = 'downloaded' | 'partial' | 'not-started'
+
 function getBrowserSupportRows(
   state: BrowserTranslationSupportTableState | null
 ): BrowserTranslationAvailabilityRow[] {
@@ -119,6 +121,42 @@ function getBrowserPairDescription(row: BrowserTranslationAvailabilityRow): stri
 function getBrowserSupportMessage(state: BrowserTranslationSupportTableState | null): string {
   if (!state) return 'Browser translation support has not been checked yet.'
   return state.message ?? 'Browser translation support is unavailable.'
+}
+
+function getDownloadStateChipClasses(input: {
+  tone: DownloadStateChipTone
+  selected: boolean
+  interactive?: boolean
+}): string {
+  const interactive = input.interactive ?? true
+  const toneClass =
+    input.tone === 'downloaded'
+      ? input.selected
+        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+        : interactive
+          ? 'border-emerald-500/70 text-emerald-700 hover:bg-emerald-500/8 dark:text-emerald-400'
+          : 'border-emerald-500/70 text-emerald-700 dark:text-emerald-400'
+      : input.tone === 'partial'
+        ? input.selected
+          ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-400'
+          : interactive
+            ? 'border-sky-500/70 text-sky-700 hover:bg-sky-500/8 dark:text-sky-400'
+            : 'border-sky-500/70 text-sky-700 dark:text-sky-400'
+        : input.selected
+          ? 'bg-primary/10 text-primary'
+          : interactive
+            ? 'text-muted-foreground hover:bg-muted/60'
+            : 'text-muted-foreground'
+  const borderClass = input.tone === 'downloaded' ? 'border-solid' : 'border-dashed'
+  return `${borderClass} ${toneClass}`
+}
+
+function getBrowserAvailabilityChipTone(
+  availability: BrowserTranslationAvailability
+): DownloadStateChipTone {
+  if (availability === 'available') return 'downloaded'
+  if (availability === 'downloading') return 'partial'
+  return 'not-started'
 }
 
 function getBrowserCapabilityMessage(state: BrowserTranslationSupportTableState | null): string {
@@ -1093,27 +1131,15 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     {browserRows.map((row) => {
                       const selected =
                         getBrowserPairKey(row) === getBrowserPairKey(selectedBrowserRow ?? row)
-                      const locallyAvailable = row.availability === 'available'
-                      const downloading = row.availability === 'downloading'
-                      const chipToneClass = locallyAvailable
-                        ? selected
-                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                          : 'border-emerald-500/70 text-emerald-700 hover:bg-emerald-500/8 dark:text-emerald-400'
-                        : downloading
-                          ? selected
-                            ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-400'
-                            : 'border-sky-500/70 text-sky-700 hover:bg-sky-500/8 dark:text-sky-400'
-                          : selected
-                            ? 'bg-primary/10 text-primary'
-                            : 'text-muted-foreground hover:bg-muted/60'
                       return (
                         <button
                           key={getBrowserPairKey(row)}
                           type="button"
                           onClick={() => setBrowserSelectedPairKey(getBrowserPairKey(row))}
-                          className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${
-                            locallyAvailable ? 'border-solid' : 'border-dashed'
-                          } ${chipToneClass}`}
+                          className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${getDownloadStateChipClasses({
+                            tone: getBrowserAvailabilityChipTone(row.availability),
+                            selected,
+                          })}`}
                           title={getBrowserPairDescription(row)}
                         >
                           <span className="font-medium">{getBrowserPairLabel(row)}</span>
@@ -1644,6 +1670,7 @@ function LocalModelCombobox({
                 </span>
                 <LocalModelGroupChips
                   groups={candidate.downloadGroups ?? candidate.asset.plan?.groups ?? []}
+                  asset={candidate.asset}
                 />
               </button>
             ))
@@ -1918,21 +1945,49 @@ function LocalProviderSettingsPopover({
   )
 }
 
-function LocalModelGroupChips({ groups }: { groups: TranslationDownloadGroupPlan[] }) {
+function LocalModelGroupChips({
+  groups,
+  asset,
+}: {
+  groups: TranslationDownloadGroupPlan[]
+  asset?: LocalModelAssetState | null
+}) {
   if (groups.length === 0) return null
+
+  const fileUsageCount = new Map<string, number>()
+  for (const group of groups) {
+    for (const file of group.files) {
+      fileUsageCount.set(file.path, (fileUsageCount.get(file.path) ?? 0) + 1)
+    }
+  }
+
   return (
     <span className="flex flex-wrap gap-1 pt-1">
-      {groups.slice(0, 5).map((group) => (
-        <span
-          key={group.id}
-          className={`border-border inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
-            group.selectable ? 'text-muted-foreground' : 'text-muted-foreground/60'
-          }`}
-        >
-          <span>{group.label}</span>
-          <span>{formatByteSize(group.estimatedTotalBytes)}</span>
-        </span>
-      ))}
+      {groups.slice(0, 5).map((group) => {
+        const tone = asset
+          ? getLocalDownloadGroupChipState(group, asset, {
+              activeSelectedGroupId: asset.plan?.selectedGroupId,
+              fileUsageCount,
+            })
+          : 'not-started'
+        return (
+          <span
+            key={group.id}
+            className={`border-border inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+              group.selectable
+                ? getDownloadStateChipClasses({
+                    tone,
+                    selected: false,
+                    interactive: false,
+                  })
+                : 'border-dashed text-muted-foreground/60'
+            }`}
+          >
+            <span>{group.label}</span>
+            <span>{formatByteSize(group.estimatedTotalBytes)}</span>
+          </span>
+        )
+      })}
     </span>
   )
 }
@@ -1980,28 +2035,16 @@ function LocalDownloadGroupSelector({
             activeSelectedGroupId: selectedGroupId,
             fileUsageCount,
           })
-          const locallyAvailable = chipState === 'downloaded'
-          const partiallyDownloaded = chipState === 'partial'
-          const chipToneClass = locallyAvailable
-            ? selected
-              ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-              : 'border-emerald-500/70 text-emerald-700 hover:bg-emerald-500/8 dark:text-emerald-400'
-            : partiallyDownloaded
-              ? selected
-                ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-400'
-                : 'border-sky-500/70 text-sky-700 hover:bg-sky-500/8 dark:text-sky-400'
-              : selected
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:bg-muted/60'
           return (
             <button
               key={group.id}
               type="button"
               disabled={!group.selectable || disabled}
               onClick={() => onSelectGroup(group.id)}
-              className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${
-                locallyAvailable ? 'border-solid' : 'border-dashed'
-              } ${chipToneClass} disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${getDownloadStateChipClasses({
+                tone: chipState,
+                selected,
+              })} disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <span className="font-medium">{group.label}</span>
               <span>{formatByteSize(group.estimatedTotalBytes)}</span>
