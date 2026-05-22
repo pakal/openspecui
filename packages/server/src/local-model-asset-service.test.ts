@@ -374,6 +374,65 @@ describe('LocalModelAssetService', () => {
     expect(state?.error).toBeUndefined()
   })
 
+  it('only falls back to error when automatic network retry is explicitly disabled', async () => {
+    hubMock.downloadFile.mockImplementation(async () => {
+      throw new TypeError('fetch failed')
+    })
+
+    const service = new LocalModelAssetService({
+      projectDir: tempDir,
+      configManager: {} as ConfigManager,
+      globalSettingsManager: {
+        readSettings: async () => ({
+          translationEngines: {
+            local: {
+              model: 'onnx-community/opus-mt-en-zh',
+              selectedGroupId: 'q4',
+              hfEndpoint: 'https://hf-mirror.com/',
+            },
+          },
+        }),
+      },
+      now: () => 100,
+      indexPath,
+      cacheDir,
+      fetchCachePath,
+      networkRetryPolicy: {
+        limit: 0,
+      },
+    }) as TestableLocalModelAssetService
+    vi.spyOn(service, 'getTransformersModule').mockResolvedValue({
+      env: {
+        cacheDir: null,
+        allowLocalModels: false,
+        localModelPath: '',
+      },
+      ModelRegistry: {
+        get_pipeline_files: vi.fn(async () => [
+          'onnx/encoder_model_q4.onnx',
+          'onnx/decoder_model_merged_q4.onnx',
+        ]),
+        is_pipeline_cached_files: vi.fn(async () => ({
+          allCached: false,
+          files: [
+            { file: 'onnx/encoder_model_q4.onnx', cached: false },
+            { file: 'onnx/decoder_model_merged_q4.onnx', cached: false },
+          ],
+        })),
+        get_file_metadata: vi.fn(),
+        clear_cache: vi.fn(),
+      },
+    })
+
+    await service.startDownload('onnx-community/opus-mt-en-zh', 'q4')
+    await waitForState(indexPath, (states) => states.some((entry) => entry.status === 'error'))
+
+    const state = (await new LocalModelAssetStore({ indexPath }).readAll())[0]
+    expect(state?.status).toBe('error')
+    expect(state?.resumable).toBe(true)
+    expect(state?.error).toContain('fetch failed')
+  })
+
   it('retries retryable Hugging Face file metadata failures before starting the streamed download', async () => {
     let metadataAttempts = 0
     hubMock.fileDownloadInfo.mockImplementation(async (input: { path: string }) => {

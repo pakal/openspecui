@@ -102,9 +102,15 @@ interface TransformersModule extends TransformersRuntimeModule {
   ModelRegistry: TransformersModelRegistry
 }
 
-const HUGGING_FACE_DOWNLOAD_RETRY_COUNT = 50
-const HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MS = 500
-const HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MAX_MS = 5_000
+const DEFAULT_NETWORK_RETRY_LIMIT = Number.POSITIVE_INFINITY
+const DEFAULT_NETWORK_RETRY_DELAY_MS = 500
+const DEFAULT_NETWORK_RETRY_DELAY_MAX_MS = 5_000
+
+interface LocalModelNetworkRetryPolicy {
+  limit?: number
+  delayMs?: number
+  maxDelayMs?: number
+}
 
 export interface LocalModelAssetServiceOptions {
   projectDir: string
@@ -114,6 +120,7 @@ export interface LocalModelAssetServiceOptions {
   indexPath?: string
   cacheDir?: string
   fetchCachePath?: string
+  networkRetryPolicy?: LocalModelNetworkRetryPolicy
 }
 
 export class LocalModelAssetService {
@@ -121,6 +128,7 @@ export class LocalModelAssetService {
   private readonly store: LocalModelAssetStore
   private readonly cacheDir: string
   private readonly fetchCacheStore: LocalModelFetchCacheStore
+  private readonly networkRetryPolicy: Required<LocalModelNetworkRetryPolicy>
   private readonly listeners = new Set<LogListener>()
   private readonly sessions = new Map<string, DownloadSession>()
   private readonly logs = new Map<string, LocalModelAssetLog>()
@@ -130,6 +138,12 @@ export class LocalModelAssetService {
     ensureProxyAwareFetchDispatcher()
     this.now = options.now ?? Date.now
     this.cacheDir = options.cacheDir ?? getDefaultLocalModelCacheDir()
+    this.networkRetryPolicy = {
+      limit: options.networkRetryPolicy?.limit ?? DEFAULT_NETWORK_RETRY_LIMIT,
+      delayMs: options.networkRetryPolicy?.delayMs ?? DEFAULT_NETWORK_RETRY_DELAY_MS,
+      maxDelayMs:
+        options.networkRetryPolicy?.maxDelayMs ?? DEFAULT_NETWORK_RETRY_DELAY_MAX_MS,
+    }
     this.store = new LocalModelAssetStore({
       indexPath: options.indexPath ?? getDefaultLocalModelIndexPath(),
     })
@@ -756,7 +770,9 @@ export class LocalModelAssetService {
         cacheDir: this.cacheDir,
         hubUrl: hfEndpoint,
         expectedSizeBytes: file.sizeBytes,
+        retryPolicy: this.networkRetryPolicy,
         fetch: createAbortableFetch(signal),
+        signal,
         onProgress: async (fileBytesDownloaded) => {
           throwIfAborted(signal)
           const boundedFileBytes = file.sizeBytes
@@ -774,6 +790,22 @@ export class LocalModelAssetService {
             message: `Downloading ${file.path}.`,
             totalBytes,
             bytesDownloaded: bytesDownloaded - previousFileBytes + boundedFileBytes,
+            files: downloadedFiles,
+          })
+        },
+        onRetry: async ({ retryDelayMs, phase }) => {
+          const retryTarget =
+            phase === 'metadata' ? `metadata for ${file.path}` : `${file.path}`
+          await this.emitDownloadProgress({
+            modelId,
+            sessionId,
+            state,
+            message: `Connection interrupted while downloading ${retryTarget}. Retrying automatically in ${formatDuration(retryDelayMs)}.`,
+            totalBytes,
+            bytesDownloaded:
+              bytesDownloaded -
+              previousFileBytes +
+              (downloadedFiles[fileIndex]?.downloadedBytes ?? 0),
             files: downloadedFiles,
           })
         },
@@ -1008,8 +1040,11 @@ async function downloadHuggingFaceFileToCacheDirWithProgress(input: {
   cacheDir: string
   hubUrl: string
   expectedSizeBytes?: number
+  retryPolicy: Required<LocalModelNetworkRetryPolicy>
   fetch: typeof fetch
+  signal: AbortSignal
   onProgress: (downloadedBytes: number) => Promise<void>
+  onRetry?: (input: { retryDelayMs: number; phase: 'metadata' | 'download' }) => Promise<void>
 }): Promise<string> {
   const revision = 'main'
   let lastError: unknown
@@ -1018,7 +1053,10 @@ async function downloadHuggingFaceFileToCacheDirWithProgress(input: {
     path: input.path,
     revision,
     hubUrl: input.hubUrl,
+    retryPolicy: input.retryPolicy,
     fetch: input.fetch,
+    signal: input.signal,
+    onRetry: input.onRetry,
   })
   if (!info) throw new Error(`Cannot get path info for ${input.path}.`)
   const totalBytes = input.expectedSizeBytes ?? info.size
@@ -1037,8 +1075,9 @@ async function downloadHuggingFaceFileToCacheDirWithProgress(input: {
     return cachePaths.pointerPath
   }
 
-  for (let attempt = 0; attempt <= HUGGING_FACE_DOWNLOAD_RETRY_COUNT; attempt += 1) {
+  for (let attempt = 0; attempt <= input.retryPolicy.limit; attempt += 1) {
     try {
+      throwIfAborted(input.signal)
       let resumeBytes = await readPathSize(cachePaths.incompletePath)
       if (resumeBytes !== null && resumeBytes > totalBytes) {
         await rm(cachePaths.incompletePath, { force: true })
@@ -1074,15 +1113,15 @@ async function downloadHuggingFaceFileToCacheDirWithProgress(input: {
       return cachePaths.pointerPath
     } catch (error) {
       lastError = error
-      if (!isRetryableDownloadError(error) || attempt === HUGGING_FACE_DOWNLOAD_RETRY_COUNT) {
+      if (!isRetryableDownloadError(error) || attempt === input.retryPolicy.limit) {
         throw error
       }
-      await delay(
-        Math.min(
-          HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MAX_MS,
-          HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MS * (attempt + 1)
-        )
+      const retryDelayMs = Math.min(
+        input.retryPolicy.maxDelayMs,
+        input.retryPolicy.delayMs * (attempt + 1)
       )
+      await input.onRetry?.({ retryDelayMs, phase: 'download' })
+      await delay(retryDelayMs, input.signal)
     }
   }
 
@@ -1094,11 +1133,15 @@ async function readHuggingFaceFileDownloadInfoWithRetry(input: {
   path: string
   revision: string
   hubUrl: string
+  retryPolicy: Required<LocalModelNetworkRetryPolicy>
   fetch: typeof fetch
+  signal: AbortSignal
+  onRetry?: (input: { retryDelayMs: number; phase: 'metadata' | 'download' }) => Promise<void>
 }) {
   let lastError: unknown
-  for (let attempt = 0; attempt <= HUGGING_FACE_DOWNLOAD_RETRY_COUNT; attempt += 1) {
+  for (let attempt = 0; attempt <= input.retryPolicy.limit; attempt += 1) {
     try {
+      throwIfAborted(input.signal)
       return await fileDownloadInfo({
         repo: input.repo,
         path: input.path,
@@ -1108,15 +1151,15 @@ async function readHuggingFaceFileDownloadInfoWithRetry(input: {
       })
     } catch (error) {
       lastError = error
-      if (!isRetryableDownloadError(error) || attempt === HUGGING_FACE_DOWNLOAD_RETRY_COUNT) {
+      if (!isRetryableDownloadError(error) || attempt === input.retryPolicy.limit) {
         throw error
       }
-      await delay(
-        Math.min(
-          HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MAX_MS,
-          HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MS * (attempt + 1)
-        )
+      const retryDelayMs = Math.min(
+        input.retryPolicy.maxDelayMs,
+        input.retryPolicy.delayMs * (attempt + 1)
       )
+      await input.onRetry?.({ retryDelayMs, phase: 'metadata' })
+      await delay(retryDelayMs, input.signal)
     }
   }
   throw lastError instanceof Error ? lastError : new Error(`Cannot get path info for ${input.path}.`)
@@ -1222,8 +1265,32 @@ function isRetryableDownloadError(error: unknown): boolean {
   )
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new Error('Local model download aborted.'))
+    }
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timer)
+        reject(new Error('Local model download aborted.'))
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  })
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${ms} ms`
+  const seconds = ms / 1_000
+  return seconds >= 10 ? `${Math.round(seconds)} s` : `${seconds.toFixed(1)} s`
 }
 
 async function mirrorHubCacheFileForTransformers(input: {
