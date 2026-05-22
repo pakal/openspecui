@@ -1038,13 +1038,6 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                           title={getBrowserPairDescription(row)}
                         >
                           <span className="font-medium">{getBrowserPairLabel(row)}</span>
-                          {row.availability === 'downloading' ? (
-                            <span>{Math.round((row.progress ?? 0) * 100)}%</span>
-                          ) : row.availability === 'available' ? (
-                            <span>Ready</span>
-                          ) : (
-                            <span>Download</span>
-                          )}
                         </button>
                       )
                     })}
