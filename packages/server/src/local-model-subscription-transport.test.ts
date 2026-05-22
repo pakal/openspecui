@@ -330,14 +330,165 @@ describe('localModels.subscribeLogs transport', () => {
       )
     ).toBe(true)
   })
+
+  it('auto-resumes a retryable stream failure and keeps streaming progress events to the client', async () => {
+    coreMockState.initWatcherPool.mockResolvedValue(undefined)
+    let encoderAttempts = 0
+    hubMock.downloadFile.mockImplementation(async (input: { path: string }) => {
+      if (input.path === 'onnx/encoder_model_q4.onnx') {
+        encoderAttempts += 1
+        if (encoderAttempts === 1) {
+          return createMockDownloadBlobWithFailure({
+            chunks: [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8, 9, 10])],
+            failAfterChunkCount: 1,
+            error: new TypeError('fetch failed'),
+          })
+        }
+      }
+      return createMockDownloadBlob(
+        input.path === 'onnx/encoder_model_q4.onnx'
+          ? [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8, 9, 10])]
+          : [new Uint8Array(10)]
+      )
+    })
+
+    const projectDir = await createIsolatedProjectDir()
+    const port = await findAvailablePort(34_710, 100)
+    const server = await startServer({ projectDir, port, enableWatcher: false })
+    runningServers.push(server)
+
+    const wsClient = createWSClient({
+      url: `ws://localhost:${server.port}/trpc`,
+      WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
+    })
+    wsClients.push(wsClient)
+
+    const subscriptionClient = createTRPCClient<AppRouter>({
+      links: [wsLink({ client: wsClient })],
+    })
+    const mutationClient = createTRPCClient<AppRouter>({
+      links: [httpBatchLink({ url: `${server.url}/trpc` })],
+    })
+
+    const started = new Promise<void>((resolve) => {
+      let resolved = false
+      const resolveOnce = () => {
+        if (resolved) return
+        resolved = true
+        resolve()
+      }
+      subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+        onStarted: resolveOnce,
+        onConnectionStateChange: (state) => {
+          if (state.state === 'pending') return
+          if (state.state === 'connecting') return
+          if (state.state === 'idle') return
+          resolveOnce()
+        },
+        onData: () => undefined,
+        onError: () => undefined,
+      })
+    })
+
+    const receivedLogs = new Promise<
+      Array<{
+        status: string
+        message: string
+        bytesDownloaded: number | undefined
+        progress: number | undefined
+      }>
+    >((resolve, reject) => {
+      const events: Array<{
+        status: string
+        message: string
+        bytesDownloaded: number | undefined
+        progress: number | undefined
+      }> = []
+      const subscription = subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+        onData: (log) => {
+          if (log.modelId !== 'onnx-community/opus-mt-en-zh') return
+          events.push({
+            status: log.status,
+            message: log.message,
+            bytesDownloaded: log.bytesDownloaded,
+            progress: log.progress,
+          })
+          const resumedMidStreamEvents = events.filter(
+            (event) =>
+              event.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
+              event.bytesDownloaded === 14
+          )
+          const sawCompleted = events.some(
+            (event) =>
+              event.status === 'downloaded' &&
+              event.message === 'Local model onnx-community/opus-mt-en-zh is ready.'
+          )
+          if (resumedMidStreamEvents.length >= 2 && sawCompleted) {
+            subscription.unsubscribe()
+            resolve(events)
+          }
+        },
+        onError: (error) => {
+          subscription.unsubscribe()
+          reject(error)
+        },
+      })
+    })
+
+    await withTimeout(started, 'subscription startup')
+    await mutationClient.localModels.download.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+      selectedGroupId: 'q4',
+    })
+
+    const events = await withTimeout(receivedLogs, 'resumed download progress logs')
+    expect(encoderAttempts).toBe(2)
+    expect(
+      events.filter(
+        (event) =>
+          event.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
+          event.bytesDownloaded === 14 &&
+          event.progress !== undefined &&
+          event.progress > 0.4 &&
+          event.progress < 0.5
+      )
+    ).toHaveLength(2)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'downloaded',
+          message: 'Local model onnx-community/opus-mt-en-zh is ready.',
+          bytesDownloaded: 30,
+          progress: 1,
+        }),
+      ])
+    )
+  })
 })
 
 function createMockDownloadBlob(chunks: Uint8Array[]): Blob {
   return new MockDownloadBlob(chunks)
 }
 
+function createMockDownloadBlobWithFailure(input: {
+  chunks: Uint8Array[]
+  failAfterChunkCount: number
+  error: Error
+}): Blob {
+  return new MockDownloadBlob(input.chunks, {
+    failAfterChunkCount: input.failAfterChunkCount,
+    error: input.error,
+  })
+}
+
 class MockDownloadBlob extends Blob {
-  constructor(private readonly chunks: Uint8Array[]) {
+  constructor(
+    private readonly chunks: Uint8Array[],
+    private readonly options?: {
+      failAfterChunkCount?: number
+      error?: Error
+    }
+  ) {
     super([])
   }
 
@@ -351,9 +502,15 @@ class MockDownloadBlob extends Blob {
 
   override stream(): ReadableStream<Uint8Array> {
     const chunks = this.chunks.map((chunk) => chunk.slice())
+    const failAfterChunkCount = this.options?.failAfterChunkCount
+    const error = this.options?.error ?? new Error('Mock download failed.')
     let chunkIndex = 0
     return new ReadableStream<Uint8Array>({
       async pull(controller) {
+        if (failAfterChunkCount !== undefined && chunkIndex >= failAfterChunkCount) {
+          controller.error(error)
+          return
+        }
         const chunk = chunks[chunkIndex]
         if (!chunk) {
           controller.close()
