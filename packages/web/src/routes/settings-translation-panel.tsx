@@ -92,6 +92,8 @@ const BROWSER_ACTIONABLE_AVAILABILITIES = new Set<BrowserTranslationAvailability
   'downloadable',
 ])
 
+type DownloadStateChipTone = 'downloaded' | 'partial' | 'not-started'
+
 function getBrowserSupportRows(
   state: BrowserTranslationSupportTableState | null
 ): BrowserTranslationAvailabilityRow[] {
@@ -119,6 +121,42 @@ function getBrowserPairDescription(row: BrowserTranslationAvailabilityRow): stri
 function getBrowserSupportMessage(state: BrowserTranslationSupportTableState | null): string {
   if (!state) return 'Browser translation support has not been checked yet.'
   return state.message ?? 'Browser translation support is unavailable.'
+}
+
+function getDownloadStateChipClasses(input: {
+  tone: DownloadStateChipTone
+  selected: boolean
+  interactive?: boolean
+}): string {
+  const interactive = input.interactive ?? true
+  const toneClass =
+    input.tone === 'downloaded'
+      ? input.selected
+        ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+        : interactive
+          ? 'border-emerald-500/70 text-emerald-700 hover:bg-emerald-500/8 dark:text-emerald-400'
+          : 'border-emerald-500/70 text-emerald-700 dark:text-emerald-400'
+      : input.tone === 'partial'
+        ? input.selected
+          ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-400'
+          : interactive
+            ? 'border-sky-500/70 text-sky-700 hover:bg-sky-500/8 dark:text-sky-400'
+            : 'border-sky-500/70 text-sky-700 dark:text-sky-400'
+        : input.selected
+          ? 'bg-primary/10 text-primary'
+          : interactive
+            ? 'text-muted-foreground hover:bg-muted/60'
+            : 'text-muted-foreground'
+  const borderClass = input.tone === 'downloaded' ? 'border-solid' : 'border-dashed'
+  return `${borderClass} ${toneClass}`
+}
+
+function getBrowserAvailabilityChipTone(
+  availability: BrowserTranslationAvailability
+): DownloadStateChipTone {
+  if (availability === 'available') return 'downloaded'
+  if (availability === 'downloading') return 'partial'
+  return 'not-started'
 }
 
 function getBrowserCapabilityMessage(state: BrowserTranslationSupportTableState | null): string {
@@ -237,6 +275,9 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const [smokeError, setSmokeError] = useState<string | null>(null)
   const [smokeRunning, setSmokeRunning] = useState(false)
   const browserPrepareControllerRef = useRef<AbortController | null>(null)
+  const localDownloadPlanRef = useRef<TranslationModelDownloadPlan | null>(null)
+  const nmtModelRef = useRef(nmtModel)
+  const nmtSelectedGroupIdRef = useRef<string | undefined>(nmtSelectedGroupId)
 
   useEffect(() => {
     if (!config) return
@@ -289,6 +330,18 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   ])
 
   useEffect(() => {
+    nmtModelRef.current = nmtModel
+  }, [nmtModel])
+
+  useEffect(() => {
+    nmtSelectedGroupIdRef.current = nmtSelectedGroupId
+  }, [nmtSelectedGroupId])
+
+  useEffect(() => {
+    localDownloadPlanRef.current = localDownloadPlan
+  }, [localDownloadPlan])
+
+  useEffect(() => {
     if (translationEngineId !== 'local') return
     const trimmedModel = nmtModel.trim()
     if (!trimmedModel) {
@@ -305,17 +358,24 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     const localPlan = localAsset
       ? createLocalPlanFromAssetState(localAsset, nmtSelectedGroupId)
       : null
+    const localAssetMatchesSelectedGroup = localAsset
+      ? matchesSelectedLocalGroupTruth(localAsset, nmtSelectedGroupId)
+      : false
     if (localAsset) {
       setLocalSelectedState(localAsset)
       setLocalDownloadPlan(localPlan)
-      setLocalPlanLoading(false)
-      return
+      if (localAssetMatchesSelectedGroup) {
+        setLocalPlanLoading(false)
+        return
+      }
     }
 
     if (!nmtLocalLoaded) {
       setLocalPlanLoading(true)
-      setLocalSelectedState(null)
-      setLocalDownloadPlan(null)
+      if (!localAsset) {
+        setLocalSelectedState(null)
+        setLocalDownloadPlan(null)
+      }
       return
     }
 
@@ -430,26 +490,30 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     if (inStaticMode) return
     const nmtSubscription = trpcClient.localModels.subscribeLogs.subscribe(undefined, {
       onData: (log) => {
-        const trimmedModel = nmtModel.trim()
+        const trimmedModel = nmtModelRef.current.trim()
         if (log.modelId !== trimmedModel) return
+        const activeSelectedGroupId = nmtSelectedGroupIdRef.current
         if (
-          nmtSelectedGroupId &&
+          activeSelectedGroupId &&
           log.selectedGroupId &&
-          log.selectedGroupId !== nmtSelectedGroupId
+          log.selectedGroupId !== activeSelectedGroupId
         ) {
           return
         }
+        const mergedPlan = mergeLocalPlanSnapshots(
+          localDownloadPlanRef.current,
+          createLocalPlanFromAssetLog(log)
+        )
+        localDownloadPlanRef.current = mergedPlan
         setLocalPlanLoading(false)
         setLocalPlanError(log.status === 'error' ? log.message : null)
         setLocalDownloadLog(log)
-        setLocalDownloadPlan((current) =>
-          mergeLocalPlanSnapshots(current, createLocalPlanFromAssetLog(log))
-        )
+        setLocalDownloadPlan(mergedPlan)
         setLocalSelectedState((current) =>
           buildLocalModelStateFromLog({
             current,
             log,
-            plan: localDownloadPlan,
+            plan: mergedPlan,
           })
         )
       },
@@ -458,7 +522,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     return () => {
       nmtSubscription.unsubscribe()
     }
-  }, [inStaticMode, localDownloadPlan, nmtModel, nmtSelectedGroupId])
+  }, [inStaticMode])
 
   useEffect(() => {
     if (translationEngineId !== 'local') {
@@ -1067,27 +1131,15 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     {browserRows.map((row) => {
                       const selected =
                         getBrowserPairKey(row) === getBrowserPairKey(selectedBrowserRow ?? row)
-                      const locallyAvailable = row.availability === 'available'
-                      const downloading = row.availability === 'downloading'
-                      const chipToneClass = locallyAvailable
-                        ? selected
-                          ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
-                          : 'border-emerald-500/70 text-emerald-700 hover:bg-emerald-500/8 dark:text-emerald-400'
-                        : downloading
-                          ? selected
-                            ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-400'
-                            : 'border-sky-500/70 text-sky-700 hover:bg-sky-500/8 dark:text-sky-400'
-                          : selected
-                            ? 'bg-primary/10 text-primary'
-                            : 'text-muted-foreground hover:bg-muted/60'
                       return (
                         <button
                           key={getBrowserPairKey(row)}
                           type="button"
                           onClick={() => setBrowserSelectedPairKey(getBrowserPairKey(row))}
-                          className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${
-                            locallyAvailable ? 'border-solid' : 'border-dashed'
-                          } ${chipToneClass}`}
+                          className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${getDownloadStateChipClasses({
+                            tone: getBrowserAvailabilityChipTone(row.availability),
+                            selected,
+                          })}`}
                           title={getBrowserPairDescription(row)}
                         >
                           <span className="font-medium">{getBrowserPairLabel(row)}</span>
@@ -1618,6 +1670,7 @@ function LocalModelCombobox({
                 </span>
                 <LocalModelGroupChips
                   groups={candidate.downloadGroups ?? candidate.asset.plan?.groups ?? []}
+                  asset={candidate.asset}
                 />
               </button>
             ))
@@ -1892,21 +1945,49 @@ function LocalProviderSettingsPopover({
   )
 }
 
-function LocalModelGroupChips({ groups }: { groups: TranslationDownloadGroupPlan[] }) {
+function LocalModelGroupChips({
+  groups,
+  asset,
+}: {
+  groups: TranslationDownloadGroupPlan[]
+  asset?: LocalModelAssetState | null
+}) {
   if (groups.length === 0) return null
+
+  const fileUsageCount = new Map<string, number>()
+  for (const group of groups) {
+    for (const file of group.files) {
+      fileUsageCount.set(file.path, (fileUsageCount.get(file.path) ?? 0) + 1)
+    }
+  }
+
   return (
     <span className="flex flex-wrap gap-1 pt-1">
-      {groups.slice(0, 5).map((group) => (
-        <span
-          key={group.id}
-          className={`border-border inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
-            group.selectable ? 'text-muted-foreground' : 'text-muted-foreground/60'
-          }`}
-        >
-          <span>{group.label}</span>
-          <span>{formatByteSize(group.estimatedTotalBytes)}</span>
-        </span>
-      ))}
+      {groups.slice(0, 5).map((group) => {
+        const tone = asset
+          ? getLocalDownloadGroupChipState(group, asset, {
+              activeSelectedGroupId: asset.plan?.selectedGroupId,
+              fileUsageCount,
+            })
+          : 'not-started'
+        return (
+          <span
+            key={group.id}
+            className={`border-border inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+              group.selectable
+                ? getDownloadStateChipClasses({
+                    tone,
+                    selected: false,
+                    interactive: false,
+                  })
+                : 'border-dashed text-muted-foreground/60'
+            }`}
+          >
+            <span>{group.label}</span>
+            <span>{formatByteSize(group.estimatedTotalBytes)}</span>
+          </span>
+        )
+      })}
     </span>
   )
 }
@@ -1937,24 +2018,33 @@ function LocalDownloadGroupSelector({
     return loadingIndicator
   }
 
+  const fileUsageCount = new Map<string, number>()
+  for (const group of groups) {
+    for (const file of group.files) {
+      fileUsageCount.set(file.path, (fileUsageCount.get(file.path) ?? 0) + 1)
+    }
+  }
+
   return (
     <>
       {loadingIndicator}
       <div className="flex flex-wrap gap-1.5 pt-1" aria-label="Local download profiles">
         {groups.map((group) => {
           const selected = group.id === selectedGroupId
-          const locallyAvailable = isLocalDownloadGroupLocallyAvailable(group, asset)
+          const chipState = getLocalDownloadGroupChipState(group, asset, {
+            activeSelectedGroupId: selectedGroupId,
+            fileUsageCount,
+          })
           return (
             <button
               key={group.id}
               type="button"
               disabled={!group.selectable || disabled}
               onClick={() => onSelectGroup(group.id)}
-              className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${
-                locallyAvailable ? 'border-solid' : 'border-dashed'
-              } ${
-                selected ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted/60'
-              } disabled:cursor-not-allowed disabled:opacity-50`}
+              className={`border-border inline-flex items-center gap-1.5 rounded border px-2.5 py-1 text-[11px] leading-none transition-colors ${getDownloadStateChipClasses({
+                tone: chipState,
+                selected,
+              })} disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <span className="font-medium">{group.label}</span>
               <span>{formatByteSize(group.estimatedTotalBytes)}</span>
@@ -1966,13 +2056,19 @@ function LocalDownloadGroupSelector({
   )
 }
 
-function isLocalDownloadGroupLocallyAvailable(
+type LocalDownloadGroupChipState = 'downloaded' | 'partial' | 'not-started'
+
+function getLocalDownloadGroupChipState(
   group: TranslationDownloadGroupPlan,
-  asset: LocalModelAssetState | null
-): boolean {
-  if (!asset || group.files.length === 0) return false
+  asset: LocalModelAssetState | null,
+  options: {
+    activeSelectedGroupId?: string
+    fileUsageCount: ReadonlyMap<string, number>
+  }
+): LocalDownloadGroupChipState {
+  if (!asset || group.files.length === 0) return 'not-started'
   const localFileByPath = new Map(asset.files.map((file) => [file.path, file]))
-  return group.files.every((file) => {
+  const allCached = group.files.every((file) => {
     const localFile = localFileByPath.get(file.path)
     return (
       file.sizeBytes !== undefined &&
@@ -1980,6 +2076,23 @@ function isLocalDownloadGroupLocallyAvailable(
       localFile.downloadedBytes >= file.sizeBytes
     )
   })
+  if (allCached) return 'downloaded'
+
+  const hasPartialBytes = group.files.some((file) => {
+    const downloadedBytes = localFileByPath.get(file.path)?.downloadedBytes ?? 0
+    return downloadedBytes > 0 && (options.fileUsageCount.get(file.path) ?? 0) <= 1
+  })
+  const activeGroupId = asset.plan?.selectedGroupId ?? options.activeSelectedGroupId
+  const matchesActiveGroup =
+    group.id === activeGroupId &&
+    (asset.status === 'queued' ||
+      asset.status === 'downloading' ||
+      asset.status === 'paused' ||
+      asset.status === 'error' ||
+      asset.status === 'deleting')
+  if (hasPartialBytes || matchesActiveGroup) return 'partial'
+
+  return 'not-started'
 }
 
 function findLocalModelAssetSnapshot(
@@ -1998,6 +2111,18 @@ function hasLocalModelAssetTruth(state: LocalModelAssetState): boolean {
     return state.files.length > 0 || Boolean(state.plan)
   }
   return false
+}
+
+function matchesSelectedLocalGroupTruth(
+  state: LocalModelAssetState,
+  selectedGroupId?: string
+): boolean {
+  if (!selectedGroupId) return true
+  const plan = state.plan
+  if (!plan?.groups?.length) {
+    return plan?.selectedGroupId === selectedGroupId
+  }
+  return plan.selectedGroupId === selectedGroupId
 }
 
 function createLocalPlanFromAssetState(

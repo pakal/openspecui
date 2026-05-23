@@ -1,4 +1,4 @@
-import { downloadFileToCacheDir, fileDownloadInfo } from '@huggingface/hub'
+import { downloadFile, fileDownloadInfo } from '@huggingface/hub'
 import type {
   ConfigManager,
   LocalModelAssetLog,
@@ -14,7 +14,18 @@ import type {
 import { LocalModelAssetStateSchema, selectLocalDownloadGroup } from '@openspecui/core'
 import { observable } from '@trpc/server/observable'
 import { existsSync } from 'node:fs'
-import { copyFile, lstat, mkdir, readlink, rm } from 'node:fs/promises'
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  open,
+  readlink,
+  rename,
+  rm,
+  stat,
+  symlink,
+  unlink,
+} from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import {
   buildTransformersRemoteHost,
@@ -38,6 +49,7 @@ import {
   type TransformersRuntimeModule,
 } from './local-model-runtime.js'
 import { ensureProxyAwareFetchDispatcher } from './network-dispatcher.js'
+import { isRetryableNetworkError } from './network-retry.js'
 import {
   searchLocalModels,
   searchLocalModelsProgressively,
@@ -91,8 +103,15 @@ interface TransformersModule extends TransformersRuntimeModule {
   ModelRegistry: TransformersModelRegistry
 }
 
-const HUGGING_FACE_DOWNLOAD_RETRY_COUNT = 2
-const HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MS = 500
+const DEFAULT_NETWORK_RETRY_LIMIT = Number.POSITIVE_INFINITY
+const DEFAULT_NETWORK_RETRY_DELAY_MS = 500
+const DEFAULT_NETWORK_RETRY_DELAY_MAX_MS = 5_000
+
+interface LocalModelNetworkRetryPolicy {
+  limit?: number
+  delayMs?: number
+  maxDelayMs?: number
+}
 
 export interface LocalModelAssetServiceOptions {
   projectDir: string
@@ -102,6 +121,7 @@ export interface LocalModelAssetServiceOptions {
   indexPath?: string
   cacheDir?: string
   fetchCachePath?: string
+  networkRetryPolicy?: LocalModelNetworkRetryPolicy
 }
 
 export class LocalModelAssetService {
@@ -109,6 +129,7 @@ export class LocalModelAssetService {
   private readonly store: LocalModelAssetStore
   private readonly cacheDir: string
   private readonly fetchCacheStore: LocalModelFetchCacheStore
+  private readonly networkRetryPolicy: Required<LocalModelNetworkRetryPolicy>
   private readonly listeners = new Set<LogListener>()
   private readonly sessions = new Map<string, DownloadSession>()
   private readonly logs = new Map<string, LocalModelAssetLog>()
@@ -118,6 +139,11 @@ export class LocalModelAssetService {
     ensureProxyAwareFetchDispatcher()
     this.now = options.now ?? Date.now
     this.cacheDir = options.cacheDir ?? getDefaultLocalModelCacheDir()
+    this.networkRetryPolicy = {
+      limit: options.networkRetryPolicy?.limit ?? DEFAULT_NETWORK_RETRY_LIMIT,
+      delayMs: options.networkRetryPolicy?.delayMs ?? DEFAULT_NETWORK_RETRY_DELAY_MS,
+      maxDelayMs: options.networkRetryPolicy?.maxDelayMs ?? DEFAULT_NETWORK_RETRY_DELAY_MAX_MS,
+    }
     this.store = new LocalModelAssetStore({
       indexPath: options.indexPath ?? getDefaultLocalModelIndexPath(),
     })
@@ -502,9 +528,12 @@ export class LocalModelAssetService {
       return LocalModelAssetStateSchema.parse({
         ...state,
         selected,
+        status: 'downloaded',
         progress: 1,
         bytesDownloaded: state.totalBytes ?? state.plan.estimatedTotalBytes,
         totalBytes: state.totalBytes ?? state.plan.estimatedTotalBytes,
+        resumable: false,
+        error: undefined,
         files,
         updatedAt: this.now(),
         installedAt: state.installedAt ?? this.now(),
@@ -557,24 +586,39 @@ export class LocalModelAssetService {
       modelId: state.modelId,
       files: planFiles.map((file: { path: string }) => file.path),
     })
-    const cachedCount = cacheStatus.files.filter((file) => file.cached).length
-    const totalCount = Math.max(cacheStatus.files.length, 1)
-    const detectedProgress = cachedCount / totalCount
+    const sameRequestedGroup =
+      requestedGroupId === undefined || requestedGroupId === state.plan?.selectedGroupId
     const cachedFileSet = new Set(
       cacheStatus.files.filter((file) => file.cached).map((file) => file.file)
     )
     const runtimeAllCached = cacheStatus.allCached
-    const progress = cacheStatus.allCached ? 1 : session ? state.progress : detectedProgress
-    const hasPartialCache = !runtimeAllCached && cachedCount > 0
     const files = planFiles.map((file) => {
       const cached = cachedFileSet.has(file.path)
       const existingFile = state.files.find((entry) => entry.path === file.path)
+      const existingDownloadedBytes = existingFile?.downloadedBytes ?? 0
+      const downloadedBytes =
+        file.sizeBytes === undefined
+          ? cached
+            ? existingDownloadedBytes
+            : existingDownloadedBytes
+          : cached
+            ? file.sizeBytes
+            : Math.min(existingDownloadedBytes, file.sizeBytes)
       return {
         path: file.path,
         sizeBytes: file.sizeBytes,
-        downloadedBytes: cached ? file.sizeBytes : session ? existingFile?.downloadedBytes : 0,
+        downloadedBytes,
       }
     })
+    const detectedBytesDownloaded = sumDownloadedBytes(files)
+    const detectedProgress =
+      effectivePlan.estimatedTotalBytes !== undefined && effectivePlan.estimatedTotalBytes > 0
+        ? detectedBytesDownloaded / effectivePlan.estimatedTotalBytes
+        : runtimeAllCached
+          ? 1
+          : undefined
+    const progress = cacheStatus.allCached ? 1 : session ? state.progress : detectedProgress
+    const hasPartialCache = !runtimeAllCached && detectedBytesDownloaded > 0
     return LocalModelAssetStateSchema.parse({
       ...state,
       selected,
@@ -583,26 +627,23 @@ export class LocalModelAssetService {
         ? 'downloaded'
         : session
           ? state.status
-          : state.status === 'paused'
+          : sameRequestedGroup && state.status === 'paused'
             ? 'paused'
-            : state.status === 'error'
+            : sameRequestedGroup && state.status === 'error'
               ? 'error'
               : hasPartialCache
                 ? 'paused'
                 : 'not-downloaded',
       progress: progress === undefined ? undefined : Math.max(0, Math.min(1, progress)),
       totalBytes: effectivePlan.estimatedTotalBytes ?? state.totalBytes,
-      bytesDownloaded: session
-        ? state.bytesDownloaded
-        : effectivePlan.estimatedTotalBytes !== undefined && progress !== undefined
-          ? Math.round(effectivePlan.estimatedTotalBytes * progress)
-          : state.bytesDownloaded,
-      resumable:
-        !runtimeAllCached &&
-        (state.status === 'paused' ||
-          state.status === 'error' ||
+      bytesDownloaded: session ? state.bytesDownloaded : detectedBytesDownloaded,
+      error: runtimeAllCached ? undefined : state.error,
+      resumable: runtimeAllCached
+        ? false
+        : (sameRequestedGroup && state.status === 'paused') ||
+          (sameRequestedGroup && state.status === 'error') ||
           hasPartialCache ||
-          (progress !== undefined && progress > 0 && progress < 1)),
+          (progress !== undefined && progress > 0 && progress < 1),
       files,
       updatedAt: this.now(),
       installedAt: runtimeAllCached ? (state.installedAt ?? this.now()) : state.installedAt,
@@ -632,20 +673,22 @@ export class LocalModelAssetService {
       throw new Error('No concrete local model download plan is available.')
     }
     const totalBytes = plan.estimatedTotalBytes
+    const resumedFiles = buildDownloadStateFiles({
+      planFiles: plan.files,
+      currentFiles: current.files,
+    })
+    const resumedBytesDownloaded = sumDownloadedBytes(resumedFiles)
     const nextState = LocalModelAssetStateSchema.parse({
       ...current,
       modelId,
       plan,
       status: targetStatus,
       selected: true,
+      bytesDownloaded: resumedBytesDownloaded,
+      progress: totalBytes > 0 ? resumedBytesDownloaded / totalBytes : current.progress,
       totalBytes,
       resumable: true,
-      files:
-        plan?.files.map((file) => ({
-          path: file.path,
-          sizeBytes: file.sizeBytes,
-          downloadedBytes: undefined,
-        })) ?? [],
+      files: resumedFiles,
       updatedAt: this.now(),
     })
     await this.store.upsert(nextState)
@@ -688,12 +731,11 @@ export class LocalModelAssetService {
     const files = selectedGroup?.files ?? state.plan?.files ?? []
     const totalBytes = selectedGroup?.estimatedTotalBytes ?? state.plan?.estimatedTotalBytes
     const hfEndpoint = normalizeHuggingFaceEndpoint(await this.readHuggingFaceEndpoint())
-    const downloadedFiles: LocalModelAssetState['files'] = files.map((file) => ({
-      path: file.path,
-      sizeBytes: file.sizeBytes,
-      downloadedBytes: 0,
-    }))
-    let bytesDownloaded = 0
+    const downloadedFiles = buildDownloadStateFiles({
+      planFiles: files,
+      currentFiles: state.files,
+    })
+    let bytesDownloaded = sumDownloadedBytes(downloadedFiles)
 
     if (files.length === 0) {
       throw new Error('No concrete local model download files were selected.')
@@ -702,11 +744,13 @@ export class LocalModelAssetService {
     for (const [fileIndex, file] of files.entries()) {
       throwIfAborted(signal)
       const previousFileBytes = downloadedFiles[fileIndex]?.downloadedBytes ?? 0
-      bytesDownloaded -= previousFileBytes
+      if (file.sizeBytes !== undefined && previousFileBytes >= file.sizeBytes) {
+        continue
+      }
       downloadedFiles[fileIndex] = {
         path: file.path,
         sizeBytes: file.sizeBytes,
-        downloadedBytes: 0,
+        downloadedBytes: previousFileBytes,
       }
       await this.emitDownloadProgress({
         modelId,
@@ -723,7 +767,9 @@ export class LocalModelAssetService {
         cacheDir: this.cacheDir,
         hubUrl: hfEndpoint,
         expectedSizeBytes: file.sizeBytes,
+        retryPolicy: this.networkRetryPolicy,
         fetch: createAbortableFetch(signal),
+        signal,
         onProgress: async (fileBytesDownloaded) => {
           throwIfAborted(signal)
           const boundedFileBytes = file.sizeBytes
@@ -740,7 +786,22 @@ export class LocalModelAssetService {
             state,
             message: `Downloading ${file.path}.`,
             totalBytes,
-            bytesDownloaded: bytesDownloaded + boundedFileBytes,
+            bytesDownloaded: bytesDownloaded - previousFileBytes + boundedFileBytes,
+            files: downloadedFiles,
+          })
+        },
+        onRetry: async ({ retryDelayMs, phase }) => {
+          const retryTarget = phase === 'metadata' ? `metadata for ${file.path}` : `${file.path}`
+          await this.emitDownloadProgress({
+            modelId,
+            sessionId,
+            state,
+            message: `Connection interrupted while downloading ${retryTarget}. Retrying automatically in ${formatDuration(retryDelayMs)}.`,
+            totalBytes,
+            bytesDownloaded:
+              bytesDownloaded -
+              previousFileBytes +
+              (downloadedFiles[fileIndex]?.downloadedBytes ?? 0),
             files: downloadedFiles,
           })
         },
@@ -753,7 +814,7 @@ export class LocalModelAssetService {
       })
       throwIfAborted(signal)
       const nextDownloadedBytes = file.sizeBytes ?? 0
-      bytesDownloaded += nextDownloadedBytes
+      bytesDownloaded = bytesDownloaded - previousFileBytes + nextDownloadedBytes
       downloadedFiles[fileIndex] = {
         path: file.path,
         sizeBytes: file.sizeBytes,
@@ -915,6 +976,35 @@ export class LocalModelAssetService {
   }
 }
 
+function buildDownloadStateFiles(input: {
+  planFiles: ReadonlyArray<{ path: string; sizeBytes?: number }>
+  currentFiles: ReadonlyArray<LocalModelAssetState['files'][number]>
+}): LocalModelAssetState['files'] {
+  const currentFileByPath = new Map(input.currentFiles.map((file) => [file.path, file]))
+  return input.planFiles.map((file) => {
+    const currentFile = currentFileByPath.get(file.path)
+    const downloadedBytes = currentFile?.downloadedBytes
+    return {
+      path: file.path,
+      sizeBytes: file.sizeBytes,
+      downloadedBytes:
+        downloadedBytes === undefined
+          ? 0
+          : file.sizeBytes === undefined
+            ? downloadedBytes
+            : Math.min(downloadedBytes, file.sizeBytes),
+    }
+  })
+}
+
+function sumDownloadedBytes(files: ReadonlyArray<LocalModelAssetState['files'][number]>): number {
+  return files.reduce((total, file) => {
+    const downloadedBytes = file.downloadedBytes ?? 0
+    if (file.sizeBytes === undefined) return total + downloadedBytes
+    return total + Math.min(downloadedBytes, file.sizeBytes)
+  }, 0)
+}
+
 function createAbortableFetch(signal: AbortSignal): typeof fetch {
   return (input, init) =>
     fetch(input, {
@@ -946,129 +1036,233 @@ async function downloadHuggingFaceFileToCacheDirWithProgress(input: {
   cacheDir: string
   hubUrl: string
   expectedSizeBytes?: number
+  retryPolicy: Required<LocalModelNetworkRetryPolicy>
   fetch: typeof fetch
+  signal: AbortSignal
   onProgress: (downloadedBytes: number) => Promise<void>
+  onRetry?: (input: { retryDelayMs: number; phase: 'metadata' | 'download' }) => Promise<void>
 }): Promise<string> {
   const revision = 'main'
   let lastError: unknown
+  const info = await readHuggingFaceFileDownloadInfoWithRetry({
+    repo: input.repo,
+    path: input.path,
+    revision,
+    hubUrl: input.hubUrl,
+    retryPolicy: input.retryPolicy,
+    fetch: input.fetch,
+    signal: input.signal,
+    onRetry: input.onRetry,
+  })
+  if (!info) throw new Error(`Cannot get path info for ${input.path}.`)
+  const totalBytes = input.expectedSizeBytes ?? info.size
+  if (totalBytes === undefined) throw new Error(`Cannot get path info for ${input.path}.`)
+  const cachePaths = getHubCacheFilePaths({
+    cacheDir: input.cacheDir,
+    modelId: input.repo.name,
+    filePath: input.path,
+    revision,
+    etag: info.etag,
+  })
 
-  for (let attempt = 0; attempt <= HUGGING_FACE_DOWNLOAD_RETRY_COUNT; attempt += 1) {
+  const existingPointerSize = await readPathSize(cachePaths.pointerPath)
+  if (existingPointerSize !== null && existingPointerSize >= totalBytes) {
+    await input.onProgress(totalBytes)
+    return cachePaths.pointerPath
+  }
+
+  for (let attempt = 0; attempt <= input.retryPolicy.limit; attempt += 1) {
     try {
-      const totalBytes =
-        input.expectedSizeBytes ??
-        (
-          await fileDownloadInfo({
-            repo: input.repo,
-            path: input.path,
-            revision,
-            hubUrl: input.hubUrl,
-            fetch: input.fetch,
-          })
-        )?.size
-      if (totalBytes === undefined) throw new Error(`Cannot get path info for ${input.path}.`)
-
-      const cachedPath = await downloadFileToCacheDir({
+      throwIfAborted(input.signal)
+      let resumeBytes = await readPathSize(cachePaths.incompletePath)
+      if (resumeBytes !== null && resumeBytes > totalBytes) {
+        await rm(cachePaths.incompletePath, { force: true })
+        resumeBytes = 0
+      }
+      if (resumeBytes !== null && resumeBytes > 0) {
+        await input.onProgress(Math.min(resumeBytes, totalBytes))
+      }
+      const blob = await downloadFile({
         repo: input.repo,
         path: input.path,
         revision,
         hubUrl: input.hubUrl,
-        cacheDir: input.cacheDir,
-        fetch: createProgressFetch(input.fetch, input.onProgress, totalBytes),
+        fetch: input.fetch,
+        downloadInfo: info,
+        xet: false,
       })
+      if (!blob) {
+        throw new Error(`Invalid response for file ${input.path}.`)
+      }
+
+      const downloadBlob =
+        resumeBytes && resumeBytes > 0 ? blob.slice(resumeBytes, totalBytes) : blob
+      await appendBlobToIncompleteFile({
+        blob: downloadBlob,
+        incompletePath: cachePaths.incompletePath,
+        startBytes: resumeBytes ?? 0,
+        totalBytes,
+        onProgress: input.onProgress,
+      })
+      await finalizeHubCacheFile(cachePaths)
       await input.onProgress(totalBytes)
-      return cachedPath
+      return cachePaths.pointerPath
     } catch (error) {
       lastError = error
-      if (!isRetryableDownloadError(error) || attempt === HUGGING_FACE_DOWNLOAD_RETRY_COUNT) {
+      if (!isRetryableDownloadError(error) || attempt === input.retryPolicy.limit) {
         throw error
       }
-      await delay(HUGGING_FACE_DOWNLOAD_RETRY_DELAY_MS * (attempt + 1))
+      const retryDelayMs = Math.min(
+        input.retryPolicy.maxDelayMs,
+        input.retryPolicy.delayMs * (attempt + 1)
+      )
+      await input.onRetry?.({ retryDelayMs, phase: 'download' })
+      await delay(retryDelayMs, input.signal)
     }
   }
 
   throw lastError instanceof Error ? lastError : new Error(`Cannot download ${input.path}.`)
 }
 
-function createProgressFetch(
-  baseFetch: typeof fetch,
-  onProgress: (downloadedBytes: number) => Promise<void>,
-  fallbackTotalBytes: number
-): typeof fetch {
-  return async (input, init) => {
-    const response = await baseFetch(input, init)
-    if (!response.body || hasRangeHeader(init?.headers) || !isHuggingFaceResolveUrl(input)) {
-      return response
-    }
-    const contentLength = Number(response.headers.get('content-length'))
-    const totalBytes =
-      Number.isFinite(contentLength) && contentLength > 0 ? contentLength : fallbackTotalBytes
-    return new Response(createProgressReadableStream(response.body, onProgress, totalBytes), {
-      status: response.status,
-      statusText: response.statusText,
-      headers: response.headers,
-    })
-  }
-}
-
-function isHuggingFaceResolveUrl(input: RequestInfo | URL): boolean {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-  return /\/(?:resolve|raw)\//.test(url) && !/\/api\//.test(url)
-}
-
-function hasRangeHeader(headers: HeadersInit | undefined): boolean {
-  if (!headers) return false
-  if (headers instanceof Headers) return headers.has('Range')
-  if (Array.isArray(headers)) {
-    return headers.some(([name]) => name.toLowerCase() === 'range')
-  }
-  return Object.keys(headers).some((name) => name.toLowerCase() === 'range')
-}
-
-function createProgressReadableStream(
-  body: ReadableStream<Uint8Array>,
-  onProgress: (downloadedBytes: number) => Promise<void>,
-  totalBytes: number
-): ReadableStream<Uint8Array> {
-  const reader = body.getReader()
-  let downloadedBytes = 0
-  return new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const result = await reader.read()
-      if (result.done) {
-        controller.close()
-        return
+async function readHuggingFaceFileDownloadInfoWithRetry(input: {
+  repo: { type: 'model'; name: string }
+  path: string
+  revision: string
+  hubUrl: string
+  retryPolicy: Required<LocalModelNetworkRetryPolicy>
+  fetch: typeof fetch
+  signal: AbortSignal
+  onRetry?: (input: { retryDelayMs: number; phase: 'metadata' | 'download' }) => Promise<void>
+}) {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= input.retryPolicy.limit; attempt += 1) {
+    try {
+      throwIfAborted(input.signal)
+      return await fileDownloadInfo({
+        repo: input.repo,
+        path: input.path,
+        revision: input.revision,
+        hubUrl: input.hubUrl,
+        fetch: input.fetch,
+      })
+    } catch (error) {
+      lastError = error
+      if (!isRetryableDownloadError(error) || attempt === input.retryPolicy.limit) {
+        throw error
       }
+      const retryDelayMs = Math.min(
+        input.retryPolicy.maxDelayMs,
+        input.retryPolicy.delayMs * (attempt + 1)
+      )
+      await input.onRetry?.({ retryDelayMs, phase: 'metadata' })
+      await delay(retryDelayMs, input.signal)
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Cannot get path info for ${input.path}.`)
+}
+
+async function appendBlobToIncompleteFile(input: {
+  blob: Blob
+  incompletePath: string
+  startBytes: number
+  totalBytes: number
+  onProgress: (downloadedBytes: number) => Promise<void>
+}): Promise<void> {
+  await mkdir(dirname(input.incompletePath), { recursive: true })
+  const fileHandle = await open(input.incompletePath, 'a')
+  const reader = input.blob.stream().getReader()
+  let downloadedBytes = input.startBytes
+  try {
+    while (true) {
+      const result = await reader.read()
+      if (result.done) break
+      await fileHandle.write(result.value)
       downloadedBytes += result.value.byteLength
-      await onProgress(Math.min(downloadedBytes, totalBytes))
-      controller.enqueue(result.value)
-    },
-    cancel(reason) {
-      return reader.cancel(reason)
-    },
-  })
+      await input.onProgress(Math.min(downloadedBytes, input.totalBytes))
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    await fileHandle.close()
+  }
+}
+
+async function finalizeHubCacheFile(input: {
+  blobPath: string
+  incompletePath: string
+  pointerPath: string
+}): Promise<void> {
+  await mkdir(dirname(input.blobPath), { recursive: true })
+  await mkdir(dirname(input.pointerPath), { recursive: true })
+  await rm(input.blobPath, { force: true })
+  await rename(input.incompletePath, input.blobPath)
+  await unlink(input.pointerPath).catch(() => undefined)
+  await symlink(input.blobPath, input.pointerPath)
+}
+
+interface HubCacheFilePaths {
+  blobPath: string
+  incompletePath: string
+  pointerPath: string
+}
+
+function getHubCacheFilePaths(input: {
+  cacheDir: string
+  modelId: string
+  filePath: string
+  revision: string
+  etag: string
+}): HubCacheFilePaths {
+  const repoPath = getHubCacheRepoPath(input.cacheDir, input.modelId)
+  const snapshotId = sanitizeEtag(input.etag) || sanitizeId(input.revision)
+  const blobPath = join(repoPath, 'blobs', sanitizeEtag(input.etag))
+  return {
+    blobPath,
+    incompletePath: `${blobPath}.incomplete`,
+    pointerPath: join(repoPath, 'snapshots', snapshotId, input.filePath),
+  }
+}
+
+async function readPathSize(path: string): Promise<number | null> {
+  try {
+    const entry = await stat(path)
+    return entry.size
+  } catch {
+    return null
+  }
 }
 
 function isRetryableDownloadError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  if (error.name === 'AbortError') return false
-  const cause = 'cause' in error ? error.cause : undefined
-  if (cause instanceof Error) {
-    if (cause.name === 'AbortError') return false
-    const causeMessage = cause.message.toLowerCase()
-    return cause.name.endsWith('TimeoutError') || causeMessage.includes('timeout')
-  }
-  const message = error.message.toLowerCase()
-  return (
-    message.includes('fetch failed') ||
-    message.includes('timeout') ||
-    message.includes('socket hang up') ||
-    message.includes('econnreset') ||
-    message.includes('terminated')
-  )
+  return isRetryableNetworkError(error, { treatUnknownAsRetryable: true })
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      reject(new Error('Local model download aborted.'))
+    }
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timer)
+        reject(new Error('Local model download aborted.'))
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+  })
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1_000) return `${ms} ms`
+  const seconds = ms / 1_000
+  return seconds >= 10 ? `${Math.round(seconds)} s` : `${seconds.toFixed(1)} s`
 }
 
 async function mirrorHubCacheFileForTransformers(input: {
@@ -1137,6 +1331,11 @@ function compareCatalogItems(left: LocalModelCatalogItem, right: LocalModelCatal
 
 function sanitizeId(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]+/g, '-')
+}
+
+function sanitizeEtag(value: string): string {
+  const normalized = value.replace(/^W\//, '').replace(/^"+|"+$/g, '')
+  return sanitizeId(normalized)
 }
 
 function formatBytes(value: number): string {
