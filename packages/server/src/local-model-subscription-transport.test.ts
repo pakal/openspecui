@@ -1,5 +1,5 @@
 import { createTRPCClient, createWSClient, httpBatchLink, wsLink } from '@trpc/client'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,7 +56,6 @@ import { startServer, type AppRouter, type RunningServer } from './server.js'
 const runningServers: RunningServer[] = []
 const tempDirs: string[] = []
 const wsClients: Array<ReturnType<typeof createWSClient>> = []
-const originalHome = process.env.HOME
 const originalFetch = globalThis.fetch
 
 beforeEach(() => {
@@ -86,22 +85,39 @@ beforeEach(() => {
 afterEach(async () => {
   await Promise.all(wsClients.splice(0).map((client) => client.close()))
   await Promise.all(runningServers.splice(0).map((server) => server.close()))
-  if (originalHome === undefined) {
-    delete process.env.HOME
-  } else {
-    process.env.HOME = originalHome
-  }
-  await Promise.all(tempDirs.splice(0).map((dir) => removeDirWithRetry(dir)))
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })))
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
 
-async function createIsolatedProjectDir(): Promise<string> {
-  const homeDir = await mkdtemp(join(tmpdir(), 'openspecui-subscription-home-'))
+async function createIsolatedProjectDir(): Promise<{
+  projectDir: string
+  runtimePaths: NonNullable<Parameters<typeof startServer>[0]['runtimePaths']>
+}> {
+  const runtimeDir = await mkdtemp(join(tmpdir(), 'openspecui-subscription-runtime-'))
   const projectDir = await mkdtemp(join(tmpdir(), 'openspecui-subscription-project-'))
-  tempDirs.push(homeDir, projectDir)
-  process.env.HOME = homeDir
-  return projectDir
+  tempDirs.push(runtimeDir, projectDir)
+  const runtimePaths = {
+    globalSettingsPath: join(runtimeDir, 'settings.json'),
+    translationCacheDatabasePath: join(runtimeDir, 'translation-cache.sqlite'),
+    localModelCacheDir: join(runtimeDir, 'translation-engines', 'local', 'hf-cache'),
+    localModelAssetIndexPath: join(runtimeDir, 'translation-engines', 'local', 'models.json'),
+    localModelFetchCachePath: join(runtimeDir, 'translation-engines', 'local', 'fetch-cache.json'),
+  }
+  await writeFile(
+    runtimePaths.globalSettingsPath,
+    JSON.stringify({
+      translationEngines: {
+        local: {
+          model: 'onnx-community/opus-mt-en-zh',
+          selectedGroupId: 'q4',
+          hfEndpoint: 'https://hf-mirror.com/',
+        },
+      },
+    }),
+    'utf8'
+  )
+  return { projectDir, runtimePaths }
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 5_000): Promise<T> {
@@ -120,32 +136,12 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = 5_000): 
   })
 }
 
-async function removeDirWithRetry(dir: string, attempts = 5): Promise<void> {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      await rm(dir, { recursive: true, force: true })
-      return
-    } catch (error) {
-      if (!isRetryableDirCleanupError(error) || attempt === attempts - 1) {
-        throw error
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)))
-    }
-  }
-}
-
-function isRetryableDirCleanupError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false
-  const code = 'code' in error ? error.code : undefined
-  return code === 'EBUSY' || code === 'ENOTEMPTY' || code === 'EPERM'
-}
-
 describe('localModels.subscribeLogs transport', () => {
   it('streams sequential delete lifecycle events to a real tRPC WebSocket client', async () => {
     coreMockState.initWatcherPool.mockResolvedValue(undefined)
-    const projectDir = await createIsolatedProjectDir()
+    const { projectDir, runtimePaths } = await createIsolatedProjectDir()
     const port = await findAvailablePort(34_600, 100)
-    const server = await startServer({ projectDir, port, enableWatcher: false })
+    const server = await startServer({ projectDir, port, enableWatcher: false, runtimePaths })
     runningServers.push(server)
 
     const wsClient = createWSClient({
@@ -216,17 +212,54 @@ describe('localModels.subscribeLogs transport', () => {
 
   it('streams byte-level download progress events to a real tRPC WebSocket client', async () => {
     coreMockState.initWatcherPool.mockResolvedValue(undefined)
-    hubMock.downloadFile.mockImplementation(async (input: { path: string }) =>
-      createMockDownloadBlob(
-        input.path === 'onnx/encoder_model_q4.onnx'
-          ? [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8, 9, 10])]
-          : [new Uint8Array(10)]
-      )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (url.includes('/api/models/') && url.includes('/tree/')) {
+          return Response.json([
+            { path: 'config.json', type: 'file', size: 10 },
+            { path: 'onnx/encoder_model_q4.onnx', type: 'file', size: 10 },
+            { path: 'onnx/decoder_model_merged_q4.onnx', type: 'file', size: 10 },
+          ])
+        }
+        if (url.includes('/resolve/main/onnx/encoder_model_q4.onnx')) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3, 4]))
+                await new Promise((resolve) => setTimeout(resolve, 20))
+                controller.enqueue(new Uint8Array([5, 6, 7, 8, 9, 10]))
+                controller.close()
+              },
+            }),
+            {
+              status: (init?.headers && new Headers(init.headers).get('Range') !== null
+                ? 206
+                : 200) as 200 | 206,
+              headers: {
+                'Content-Length': '10',
+                'Content-Range': 'bytes 0-9/10',
+              },
+            }
+          )
+        }
+        if (url.includes('/resolve/main/')) {
+          return new Response(new Uint8Array(10), {
+            status: 200,
+            headers: {
+              'Content-Length': '10',
+            },
+          })
+        }
+        return originalFetch(input, init)
+      })
     )
 
-    const projectDir = await createIsolatedProjectDir()
+    const { projectDir, runtimePaths } = await createIsolatedProjectDir()
     const port = await findAvailablePort(34_700, 100)
-    const server = await startServer({ projectDir, port, enableWatcher: false })
+    const server = await startServer({ projectDir, port, enableWatcher: false, runtimePaths })
     runningServers.push(server)
 
     const wsClient = createWSClient({
@@ -354,27 +387,60 @@ describe('localModels.subscribeLogs transport', () => {
   it('auto-resumes a retryable stream failure and keeps streaming progress events to the client', async () => {
     coreMockState.initWatcherPool.mockResolvedValue(undefined)
     let encoderAttempts = 0
-    hubMock.downloadFile.mockImplementation(async (input: { path: string }) => {
-      if (input.path === 'onnx/encoder_model_q4.onnx') {
-        encoderAttempts += 1
-        if (encoderAttempts === 1) {
-          return createMockDownloadBlobWithFailure({
-            chunks: [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8, 9, 10])],
-            failAfterChunkCount: 1,
-            error: new TypeError('fetch failed'),
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (url.includes('/api/models/') && url.includes('/tree/')) {
+          return Response.json([
+            { path: 'config.json', type: 'file', size: 10 },
+            { path: 'onnx/encoder_model_q4.onnx', type: 'file', size: 10 },
+            { path: 'onnx/decoder_model_merged_q4.onnx', type: 'file', size: 10 },
+          ])
+        }
+        if (url.includes('/resolve/main/onnx/encoder_model_q4.onnx')) {
+          encoderAttempts += 1
+          const range = init?.headers ? new Headers(init.headers).get('Range') : null
+          if (encoderAttempts === 1) {
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3, 4]))
+                  controller.error(new TypeError('fetch failed'))
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  'Content-Length': '10',
+                },
+              }
+            )
+          }
+          return new Response(new Uint8Array([5, 6, 7, 8, 9, 10]), {
+            status: range ? 206 : 200,
+            headers: {
+              'Content-Length': '6',
+              'Content-Range': 'bytes 4-9/10',
+            },
           })
         }
-      }
-      return createMockDownloadBlob(
-        input.path === 'onnx/encoder_model_q4.onnx'
-          ? [new Uint8Array([1, 2, 3, 4]), new Uint8Array([5, 6, 7, 8, 9, 10])]
-          : [new Uint8Array(10)]
-      )
-    })
+        if (url.includes('/resolve/main/')) {
+          return new Response(new Uint8Array(10), {
+            status: 200,
+            headers: {
+              'Content-Length': '10',
+            },
+          })
+        }
+        return originalFetch(input, init)
+      })
+    )
 
-    const projectDir = await createIsolatedProjectDir()
+    const { projectDir, runtimePaths } = await createIsolatedProjectDir()
     const port = await findAvailablePort(34_710, 100)
-    const server = await startServer({ projectDir, port, enableWatcher: false })
+    const server = await startServer({ projectDir, port, enableWatcher: false, runtimePaths })
     runningServers.push(server)
 
     const wsClient = createWSClient({
@@ -433,17 +499,27 @@ describe('localModels.subscribeLogs transport', () => {
             bytesDownloaded: log.bytesDownloaded,
             progress: log.progress,
           })
-          const resumedMidStreamEvents = events.filter(
+          const sawRetryNotice = events.some(
+            (event) =>
+              event.message ===
+              'Connection interrupted while downloading onnx/encoder_model_q4.onnx. Retrying automatically in 500 ms.'
+          )
+          const sawResumedMidStreamEvent = events.some(
             (event) =>
               event.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
-              event.bytesDownloaded === 14
+              typeof event.bytesDownloaded === 'number' &&
+              event.bytesDownloaded > 10 &&
+              event.bytesDownloaded < 20 &&
+              typeof event.progress === 'number' &&
+              event.progress > 0.33 &&
+              event.progress < 0.67
           )
           const sawCompleted = events.some(
             (event) =>
               event.status === 'downloaded' &&
               event.message === 'Local model onnx-community/opus-mt-en-zh is ready.'
           )
-          if (resumedMidStreamEvents.length >= 2 && sawCompleted) {
+          if (sawRetryNotice && sawResumedMidStreamEvent && sawCompleted) {
             subscription.unsubscribe()
             resolve(events)
           }
@@ -463,16 +539,27 @@ describe('localModels.subscribeLogs transport', () => {
 
     const events = await withTimeout(receivedLogs, 'resumed download progress logs')
     expect(encoderAttempts).toBe(2)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'downloading',
+          message:
+            'Connection interrupted while downloading onnx/encoder_model_q4.onnx. Retrying automatically in 500 ms.',
+        }),
+      ])
+    )
     expect(
-      events.filter(
+      events.some(
         (event) =>
           event.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
-          event.bytesDownloaded === 14 &&
+          event.bytesDownloaded !== undefined &&
+          event.bytesDownloaded > 10 &&
+          event.bytesDownloaded < 20 &&
           event.progress !== undefined &&
-          event.progress > 0.4 &&
-          event.progress < 0.5
+          event.progress > 0.33 &&
+          event.progress < 0.67
       )
-    ).toHaveLength(2)
+    ).toBe(true)
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -485,79 +572,3 @@ describe('localModels.subscribeLogs transport', () => {
     )
   })
 })
-
-function createMockDownloadBlob(chunks: Uint8Array[]): Blob {
-  return new MockDownloadBlob(chunks)
-}
-
-function createMockDownloadBlobWithFailure(input: {
-  chunks: Uint8Array[]
-  failAfterChunkCount: number
-  error: Error
-}): Blob {
-  return new MockDownloadBlob(input.chunks, {
-    failAfterChunkCount: input.failAfterChunkCount,
-    error: input.error,
-  })
-}
-
-class MockDownloadBlob extends Blob {
-  constructor(
-    private readonly chunks: Uint8Array[],
-    private readonly options?: {
-      failAfterChunkCount?: number
-      error?: Error
-    }
-  ) {
-    super([])
-  }
-
-  override get size(): number {
-    return this.chunks.reduce((total, chunk) => total + chunk.byteLength, 0)
-  }
-
-  override slice(start = 0, end = this.size): Blob {
-    return new MockDownloadBlob(sliceChunks(this.chunks, start, end))
-  }
-
-  override stream(): ReadableStream<Uint8Array> {
-    const chunks = this.chunks.map((chunk) => chunk.slice())
-    const failAfterChunkCount = this.options?.failAfterChunkCount
-    const error = this.options?.error ?? new Error('Mock download failed.')
-    let chunkIndex = 0
-    return new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        if (failAfterChunkCount !== undefined && chunkIndex >= failAfterChunkCount) {
-          controller.error(error)
-          return
-        }
-        const chunk = chunks[chunkIndex]
-        if (!chunk) {
-          controller.close()
-          return
-        }
-        chunkIndex += 1
-        if (chunkIndex > 1) {
-          await new Promise((resolve) => setTimeout(resolve, 20))
-        }
-        controller.enqueue(chunk)
-      },
-    })
-  }
-}
-
-function sliceChunks(chunks: ReadonlyArray<Uint8Array>, start: number, end: number): Uint8Array[] {
-  const next: Uint8Array[] = []
-  let offset = 0
-  for (const chunk of chunks) {
-    const chunkStart = offset
-    const chunkEnd = offset + chunk.byteLength
-    offset = chunkEnd
-    if (end <= chunkStart || start >= chunkEnd) continue
-    const from = Math.max(0, start - chunkStart)
-    const to = Math.min(chunk.byteLength, end - chunkStart)
-    if (from >= to) continue
-    next.push(chunk.slice(from, to))
-  }
-  return next
-}
