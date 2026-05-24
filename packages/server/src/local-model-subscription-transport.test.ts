@@ -571,4 +571,383 @@ describe('localModels.subscribeLogs transport', () => {
       ])
     )
   })
+
+  it('streams pause and resume lifecycle events to a real tRPC WebSocket client', async () => {
+    coreMockState.initWatcherPool.mockResolvedValue(undefined)
+    const releaseFirstEncoderStream = createDeferred<void>()
+    let encoderAttempts = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (url.includes('/api/models/') && url.includes('/tree/')) {
+          return Response.json([
+            { path: 'config.json', type: 'file', size: 10 },
+            { path: 'onnx/encoder_model_q4.onnx', type: 'file', size: 10 },
+            { path: 'onnx/decoder_model_merged_q4.onnx', type: 'file', size: 10 },
+          ])
+        }
+        if (url.includes('/resolve/main/onnx/encoder_model_q4.onnx')) {
+          encoderAttempts += 1
+          if (encoderAttempts === 1) {
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                async start(controller) {
+                  controller.enqueue(new Uint8Array([1, 2, 3, 4]))
+                  await releaseFirstEncoderStream.promise
+                  if (init?.signal?.aborted) {
+                    controller.error(new Error('Local model download aborted.'))
+                    return
+                  }
+                  controller.enqueue(new Uint8Array([5, 6, 7, 8, 9, 10]))
+                  controller.close()
+                },
+              }),
+              {
+                status: 200,
+                headers: {
+                  'Content-Length': '10',
+                },
+              }
+            )
+          }
+          return new Response(new Uint8Array([5, 6, 7, 8, 9, 10]), {
+            status: 206,
+            headers: {
+              'Content-Length': '6',
+              'Content-Range': 'bytes 4-9/10',
+            },
+          })
+        }
+        if (url.includes('/resolve/main/')) {
+          return new Response(new Uint8Array(10), {
+            status: 200,
+            headers: {
+              'Content-Length': '10',
+            },
+          })
+        }
+        return originalFetch(input, init)
+      })
+    )
+
+    const { projectDir, runtimePaths } = await createIsolatedProjectDir()
+    const port = await findAvailablePort(34_720, 100)
+    const server = await startServer({ projectDir, port, enableWatcher: false, runtimePaths })
+    runningServers.push(server)
+
+    const wsClient = createWSClient({
+      url: `ws://localhost:${server.port}/trpc`,
+      WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
+    })
+    wsClients.push(wsClient)
+
+    const subscriptionClient = createTRPCClient<AppRouter>({
+      links: [wsLink({ client: wsClient })],
+    })
+    const mutationClient = createTRPCClient<AppRouter>({
+      links: [httpBatchLink({ url: `${server.url}/trpc` })],
+    })
+
+    const started = new Promise<void>((resolve) => {
+      let resolved = false
+      const resolveOnce = () => {
+        if (resolved) return
+        resolved = true
+        resolve()
+      }
+      subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+        onStarted: resolveOnce,
+        onConnectionStateChange: (state) => {
+          if (state.state === 'pending') return
+          if (state.state === 'connecting') return
+          if (state.state === 'idle') return
+          resolveOnce()
+        },
+        onData: () => undefined,
+        onError: () => undefined,
+      })
+    })
+
+    const events: Array<{
+      status: string
+      message: string
+      bytesDownloaded: number | undefined
+      progress: number | undefined
+      resumable: boolean | undefined
+    }> = []
+    let resolveMidProgress!: () => void
+    let resolvePaused!: () => void
+    let resolveDownloaded!: () => void
+    const midProgress = new Promise<void>((resolve) => {
+      resolveMidProgress = resolve
+    })
+    const paused = new Promise<void>((resolve) => {
+      resolvePaused = resolve
+    })
+    const downloaded = new Promise<void>((resolve) => {
+      resolveDownloaded = resolve
+    })
+    const subscription = subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+      onData: (log) => {
+        if (log.modelId !== 'onnx-community/opus-mt-en-zh') return
+        events.push({
+          status: log.status,
+          message: log.message,
+          bytesDownloaded: log.bytesDownloaded,
+          progress: log.progress,
+          resumable: log.resumable,
+        })
+        if (
+          log.status === 'downloading' &&
+          log.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
+          log.bytesDownloaded === 14
+        ) {
+          resolveMidProgress()
+        }
+        if (log.status === 'paused') {
+          resolvePaused()
+        }
+        if (log.status === 'downloaded') {
+          resolveDownloaded()
+        }
+      },
+    })
+
+    await withTimeout(started, 'subscription startup')
+    await mutationClient.localModels.download.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+      selectedGroupId: 'q4',
+    })
+    await withTimeout(midProgress, 'mid-download progress event')
+
+    await mutationClient.localModels.pause.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+    })
+    releaseFirstEncoderStream.resolve()
+    await withTimeout(paused, 'pause event')
+
+    await mutationClient.localModels.resume.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+      selectedGroupId: 'q4',
+    })
+    await withTimeout(downloaded, 'downloaded event after resume')
+    subscription.unsubscribe()
+
+    expect(encoderAttempts).toBe(2)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'downloading',
+          message: 'Downloading local model onnx-community/opus-mt-en-zh.',
+          bytesDownloaded: 0,
+          progress: 0,
+        }),
+        expect.objectContaining({
+          status: 'downloading',
+          message: 'Downloading onnx/encoder_model_q4.onnx.',
+          bytesDownloaded: 14,
+        }),
+        expect.objectContaining({
+          status: 'paused',
+          message: 'Local model download paused.',
+          bytesDownloaded: 14,
+          resumable: true,
+        }),
+        expect.objectContaining({
+          status: 'downloading',
+          message: 'Resuming local model download onnx-community/opus-mt-en-zh.',
+          bytesDownloaded: 14,
+        }),
+        expect.objectContaining({
+          status: 'downloaded',
+          message: 'Local model onnx-community/opus-mt-en-zh is ready.',
+          bytesDownloaded: 30,
+          progress: 1,
+          resumable: false,
+        }),
+      ])
+    )
+  })
+
+  it('streams delete lifecycle events for an active download without later completion overwrite', async () => {
+    coreMockState.initWatcherPool.mockResolvedValue(undefined)
+    const releaseEncoderStream = createDeferred<void>()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        if (url.includes('/api/models/') && url.includes('/tree/')) {
+          return Response.json([
+            { path: 'config.json', type: 'file', size: 10 },
+            { path: 'onnx/encoder_model_q4.onnx', type: 'file', size: 10 },
+            { path: 'onnx/decoder_model_merged_q4.onnx', type: 'file', size: 10 },
+          ])
+        }
+        if (url.includes('/resolve/main/onnx/encoder_model_q4.onnx')) {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                controller.enqueue(new Uint8Array([1, 2, 3, 4]))
+                await releaseEncoderStream.promise
+                if (init?.signal?.aborted) {
+                  controller.error(new Error('Local model download aborted.'))
+                  return
+                }
+                controller.enqueue(new Uint8Array([5, 6, 7, 8, 9, 10]))
+                controller.close()
+              },
+            }),
+            {
+              status: 200,
+              headers: {
+                'Content-Length': '10',
+              },
+            }
+          )
+        }
+        if (url.includes('/resolve/main/')) {
+          return new Response(new Uint8Array(10), {
+            status: 200,
+            headers: {
+              'Content-Length': '10',
+            },
+          })
+        }
+        return originalFetch(input, init)
+      })
+    )
+
+    const { projectDir, runtimePaths } = await createIsolatedProjectDir()
+    const port = await findAvailablePort(34_730, 100)
+    const server = await startServer({ projectDir, port, enableWatcher: false, runtimePaths })
+    runningServers.push(server)
+
+    const wsClient = createWSClient({
+      url: `ws://localhost:${server.port}/trpc`,
+      WebSocket: WebSocket as unknown as typeof globalThis.WebSocket,
+    })
+    wsClients.push(wsClient)
+
+    const subscriptionClient = createTRPCClient<AppRouter>({
+      links: [wsLink({ client: wsClient })],
+    })
+    const mutationClient = createTRPCClient<AppRouter>({
+      links: [httpBatchLink({ url: `${server.url}/trpc` })],
+    })
+
+    const started = new Promise<void>((resolve) => {
+      let resolved = false
+      const resolveOnce = () => {
+        if (resolved) return
+        resolved = true
+        resolve()
+      }
+      subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+        onStarted: resolveOnce,
+        onConnectionStateChange: (state) => {
+          if (state.state === 'pending') return
+          if (state.state === 'connecting') return
+          if (state.state === 'idle') return
+          resolveOnce()
+        },
+        onData: () => undefined,
+        onError: () => undefined,
+      })
+    })
+
+    const events: Array<{
+      status: string
+      message: string
+      bytesDownloaded: number | undefined
+      progress: number | undefined
+    }> = []
+    let resolveMidProgress!: () => void
+    let resolveDeleted!: () => void
+    const midProgress = new Promise<void>((resolve) => {
+      resolveMidProgress = resolve
+    })
+    const deleted = new Promise<void>((resolve) => {
+      resolveDeleted = resolve
+    })
+    const subscription = subscriptionClient.localModels.subscribeLogs.subscribe(undefined, {
+      onData: (log) => {
+        if (log.modelId !== 'onnx-community/opus-mt-en-zh') return
+        events.push({
+          status: log.status,
+          message: log.message,
+          bytesDownloaded: log.bytesDownloaded,
+          progress: log.progress,
+        })
+        if (
+          log.status === 'downloading' &&
+          log.message === 'Downloading onnx/encoder_model_q4.onnx.' &&
+          log.bytesDownloaded === 14
+        ) {
+          resolveMidProgress()
+        }
+        if (log.status === 'not-downloaded') {
+          resolveDeleted()
+        }
+      },
+    })
+
+    await withTimeout(started, 'subscription startup')
+    await mutationClient.localModels.download.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+      selectedGroupId: 'q4',
+    })
+    await withTimeout(midProgress, 'mid-download progress event')
+
+    await mutationClient.localModels.delete.mutate({
+      modelId: 'onnx-community/opus-mt-en-zh',
+    })
+    releaseEncoderStream.resolve()
+    await withTimeout(deleted, 'delete completion event')
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    subscription.unsubscribe()
+
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'downloading',
+          message: 'Downloading local model onnx-community/opus-mt-en-zh.',
+          bytesDownloaded: 0,
+          progress: 0,
+        }),
+        expect.objectContaining({
+          status: 'downloading',
+          message: 'Downloading onnx/encoder_model_q4.onnx.',
+          bytesDownloaded: 14,
+        }),
+        expect.objectContaining({
+          status: 'deleting',
+          message: 'Deleting local model files.',
+        }),
+        expect.objectContaining({
+          status: 'not-downloaded',
+          message: 'Local model files were removed.',
+          bytesDownloaded: 0,
+          progress: 0,
+        }),
+      ])
+    )
+    expect(events.some((event) => event.status === 'downloaded')).toBe(false)
+  })
 })
+
+function createDeferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T | PromiseLike<T>) => void
+  reject: (error: unknown) => void
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (error: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}

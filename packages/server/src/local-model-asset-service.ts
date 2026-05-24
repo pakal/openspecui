@@ -301,6 +301,7 @@ export class LocalModelAssetService {
       modelId,
       status: 'not-downloaded',
       selected: modelId === (await this.readSelectedModel()),
+      ...(await this.buildUncachedModelStatePayload(modelId, selectedGroupId)),
       updatedAt: this.now(),
     })
   }
@@ -1065,6 +1066,46 @@ export class LocalModelAssetService {
     const transformers = await this.getTransformersModule()
     transformers.env.remoteHost = buildTransformersRemoteHost(await this.readHuggingFaceEndpoint())
     return this.readPlan(modelId, transformers, selectedGroupId)
+  }
+
+  private async buildUncachedModelStatePayload(
+    modelId: string,
+    selectedGroupId?: string
+  ): Promise<Partial<LocalModelAssetState>> {
+    const plan = await this.readPlanForState(modelId, selectedGroupId)
+    if (!plan) return {}
+    const selectedGroup = selectLocalDownloadGroup(plan, selectedGroupId ?? plan.selectedGroupId)
+    const selectedPlan = selectedGroup
+      ? {
+          ...plan,
+          selectedGroupId: selectedGroup.id,
+          estimatedTotalBytes: selectedGroup.estimatedTotalBytes ?? plan.estimatedTotalBytes,
+          files: selectedGroup.files,
+          groups: plan.groups?.map((group) => ({
+            ...group,
+            selected: group.id === selectedGroup.id,
+            status: 'not-downloaded' as const,
+          })),
+        }
+      : {
+          ...plan,
+          groups: plan.groups?.map((group) => ({
+            ...group,
+            status: 'not-downloaded' as const,
+          })),
+        }
+    const files = selectedPlan.files.map((file) => ({
+      path: file.path,
+      sizeBytes: file.sizeBytes,
+      downloadedBytes: 0,
+    }))
+    return {
+      plan: selectedPlan,
+      progress: 0,
+      bytesDownloaded: 0,
+      totalBytes: selectedPlan.estimatedTotalBytes,
+      files,
+    }
   }
 
   private async readSelectedModel(): Promise<string> {

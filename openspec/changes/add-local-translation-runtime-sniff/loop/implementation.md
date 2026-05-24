@@ -24,6 +24,13 @@ Completed code work in this implementation pass:
 - Download Files now reads the same selected server profile truth as the chips.
 - Local download log subscription invalidates/refetches `panelState` instead of
   synthesizing local model state in the browser.
+- The `not-downloaded` state after deleting local files now still carries the
+  runtime download plan, selected group, total bytes, and zeroed file list. This
+  keeps the Local panel renderable after deletion without falling back to a
+  second catalog-derived truth.
+- Download session teardown is explicitly guarded by session identity. Pausing
+  or deleting an active download aborts the stream, and a later-settling old task
+  cannot overwrite the paused/deleted server state.
 - Document translation availability now resolves project + global translation
   config before rendering document translation controls.
 - Local translator batch translation now calls the underlying pipeline with the
@@ -38,6 +45,15 @@ Focused tests added or updated:
   - downloaded profiles remaining independently green
   - an active profile download not leaking status to another selected profile
   - shared auxiliary files not causing another profile to look partially downloaded
+  - paused state surviving a later-settling aborted download stream
+  - deleted state surviving a later-settling cancelled download task
+  - runtime download plan/file list remaining available after local deletion
+- Server tRPC transport tests cover:
+  - byte-level download progress delivered through a real WebSocket client
+  - retryable stream auto-resume progress delivered through a real WebSocket client
+  - pause then resume lifecycle events delivered through a real WebSocket client
+  - delete during an active download delivering `deleting -> not-downloaded`
+    without a later bogus `downloaded` event
 - Web Settings tests cover:
   - server `panelState` as the Local panel source
   - profile chips using border style for selection and color for status
@@ -45,6 +61,10 @@ Focused tests added or updated:
   - downloaded profile chips staying green even when a different profile is selected
   - Local profile chips and Download Files remaining visible while a new
     `panelState` request is still pending after chip selection
+  - subscription logs not being allowed to synthesize a completed UI unless the
+    refreshed server `panelState` says the model is downloaded
+  - download, pause, resume, complete, delete, and deleting UI states driven from
+    server panel snapshots
 - Web document translation tests cover local readiness after switching away from
   an unavailable Browser engine.
 - Browser translation tests cover batch output reordering and adaptive concurrency log recording.
@@ -66,8 +86,10 @@ Focused tests added or updated:
 ## Verification Performed
 
 - `pnpm --filter @openspecui/web exec vitest run src/routes/settings.test.tsx --project unit`
-  - Passed: 36 tests.
+  - Passed: 38 tests after lifecycle hardening.
   - Re-run after the Local profile switch regression fix: passed 36 tests.
+- `pnpm --filter @openspecui/server exec vitest run src/local-model-asset-service.test.ts src/local-model-subscription-transport.test.ts`
+  - Passed: 20 tests after lifecycle and subscription BDD coverage.
 - `pnpm --filter @openspecui/server exec vitest run src/local-model-asset-service.test.ts src/translation-engine-service.test.ts`
   - Passed: 18 tests.
 - `pnpm --filter @openspecui/core typecheck`

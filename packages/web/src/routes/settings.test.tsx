@@ -2075,6 +2075,85 @@ describe('Settings', () => {
     expect(screen.getByText('48.3 MB / 50.4 MB')).toBeTruthy()
   })
 
+  it('does not synthesize Local completion UI from subscription logs without server panel truth', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const modelId = 'Xenova/opus-mt-no-de'
+    const serverAsset: LocalModelAssetState = {
+      modelId,
+      status: 'not-downloaded',
+      selected: true,
+      progress: 0,
+      bytesDownloaded: 0,
+      totalBytes: 246415360,
+      resumable: false,
+      plan: createQ8PlanForTest(modelId),
+      files: createQ8AssetFilesForTest({}),
+      updatedAt: 100,
+    }
+    localModelsMock.state.mockImplementation(async () => serverAsset)
+    localModelsMock.panelState.mockImplementation(async ({ selectedGroupId }) => ({
+      modelId,
+      selectedGroupId,
+      asset: serverAsset,
+      downloadPlan: serverAsset.plan ?? null,
+    }))
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: false,
+          targetLanguage: 'de',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    expect(await screen.findByRole('button', { name: 'Download model' })).toBeTruthy()
+    localModelsMock.panelState.mockClear()
+
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'downloaded',
+      message: `Local model ${modelId} is ready.`,
+      progress: 1,
+      bytesDownloaded: 246415360,
+      totalBytes: 246415360,
+      sessionId: 'session-1',
+      resumable: false,
+      files: createDownloadedQ8AssetFilesForTest(),
+      updatedAt: 200,
+    })
+
+    await waitFor(() =>
+      expect(localModelsMock.panelState).toHaveBeenCalledWith({
+        modelId,
+        selectedGroupId: 'q8',
+      })
+    )
+    expect(screen.getByRole('button', { name: 'Download model' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Delete model' })).toBeNull()
+    expect(
+      screen.queryByLabelText('Downloaded', {
+        selector: '[data-local-plan-action="downloaded"]',
+      })
+    ).toBeNull()
+    expect(screen.getByText('0 B / 50.4 MB')).toBeTruthy()
+  })
+
   it('keeps a stable Local log subscription while progress events stream in', async () => {
     vi.stubGlobal(
       'matchMedia',
@@ -2202,6 +2281,223 @@ describe('Settings', () => {
     })
 
     expect(await screen.findByText('93.8 MB / 185 MB')).toBeTruthy()
+    expect(localModelsMock.subscribeLogs).toHaveBeenCalledTimes(1)
+  })
+
+  it('drives Local download, pause, resume, complete, and delete UI from server panel snapshots', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const modelId = 'Xenova/opus-mt-no-de'
+    const buildQ8Plan = (
+      status: NonNullable<TranslationModelDownloadPlan['groups']>[number]['status']
+    ): TranslationModelDownloadPlan => {
+      const plan = createQ8PlanForTest(modelId)
+      return {
+        ...plan,
+        groups: plan.groups?.map((group) => ({
+          ...group,
+          status,
+        })),
+      }
+    }
+    const buildAsset = (
+      input: Pick<LocalModelAssetState, 'status' | 'progress' | 'bytesDownloaded' | 'resumable'> & {
+        downloadedBytes: Partial<Record<string, number>>
+      }
+    ): LocalModelAssetState => {
+      const plan = buildQ8Plan(input.status)
+      return {
+        modelId,
+        status: input.status,
+        selected: true,
+        progress: input.progress,
+        bytesDownloaded: input.bytesDownloaded,
+        totalBytes: 246415360,
+        resumable: input.resumable,
+        plan,
+        files: createQ8AssetFilesForTest(input.downloadedBytes),
+        updatedAt: 100,
+      }
+    }
+    let serverAsset = buildAsset({
+      status: 'not-downloaded',
+      progress: 0,
+      bytesDownloaded: 0,
+      resumable: false,
+      downloadedBytes: {},
+    })
+    localModelsMock.state.mockImplementation(async () => serverAsset)
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: false,
+          targetLanguage: 'de',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    const downloadButton = await screen.findByRole('button', { name: 'Download model' })
+    fireEvent.click(downloadButton)
+    expect(localModelsMock.download).toHaveBeenCalledWith({ modelId, selectedGroupId: 'q8' })
+    expect(screen.getByRole('button', { name: 'Download model' })).toBeTruthy()
+
+    localModelsMock.panelState.mockClear()
+    serverAsset = buildAsset({
+      status: 'downloading',
+      progress: 0.2,
+      bytesDownloaded: 49283072,
+      resumable: true,
+      downloadedBytes: {
+        'config.json': 1503,
+        'generation_config.json': 293,
+        'source.spm': 806435,
+        'target.spm': 804600,
+        'onnx/encoder_model_quantized.onnx': 47685693,
+      },
+    })
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'downloading',
+      message: 'Downloading onnx/encoder_model_quantized.onnx.',
+      progress: 0.2,
+      bytesDownloaded: 49283072,
+      totalBytes: 246415360,
+      sessionId: 'session-1',
+      resumable: true,
+      files: serverAsset.files,
+      updatedAt: 200,
+    })
+    expect(await screen.findByRole('button', { name: 'Pause download' })).toBeTruthy()
+    expect(screen.getByText('45.5 MB / 50.4 MB')).toBeTruthy()
+    expect(localModelsMock.panelState).toHaveBeenCalledWith({ modelId, selectedGroupId: 'q8' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pause download' }))
+    expect(localModelsMock.pause).toHaveBeenCalledWith({ modelId })
+    serverAsset = buildAsset({
+      status: 'paused',
+      progress: 0.2,
+      bytesDownloaded: 49283072,
+      resumable: true,
+      downloadedBytes: {
+        'config.json': 1503,
+        'generation_config.json': 293,
+        'source.spm': 806435,
+        'target.spm': 804600,
+        'onnx/encoder_model_quantized.onnx': 47685693,
+      },
+    })
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'paused',
+      message: 'Local model download paused.',
+      progress: 0.2,
+      bytesDownloaded: 49283072,
+      totalBytes: 246415360,
+      resumable: true,
+      files: serverAsset.files,
+      updatedAt: 300,
+    })
+    expect(await screen.findByRole('button', { name: 'Resume download' })).toBeTruthy()
+    expect(screen.getByText('Local model download paused.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Resume download' }))
+    expect(localModelsMock.resume).toHaveBeenCalledWith({ modelId, selectedGroupId: 'q8' })
+    serverAsset = buildAsset({
+      status: 'downloaded',
+      progress: 1,
+      bytesDownloaded: 246415360,
+      resumable: false,
+      downloadedBytes: Object.fromEntries(
+        createQ8PlanFilesForTest().map((file) => [file.path, file.sizeBytes ?? 0])
+      ),
+    })
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'downloaded',
+      message: `Local model ${modelId} is ready.`,
+      progress: 1,
+      bytesDownloaded: 246415360,
+      totalBytes: 246415360,
+      sessionId: 'session-1',
+      resumable: false,
+      files: serverAsset.files,
+      updatedAt: 400,
+    })
+    expect(
+      await screen.findByLabelText('Downloaded', {
+        selector: '[data-local-plan-action="downloaded"]',
+      })
+    ).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Delete model' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete model' }))
+    expect(localModelsMock.delete).toHaveBeenCalledWith({ modelId })
+    serverAsset = buildAsset({
+      status: 'deleting',
+      progress: 1,
+      bytesDownloaded: 246415360,
+      resumable: false,
+      downloadedBytes: Object.fromEntries(
+        createQ8PlanFilesForTest().map((file) => [file.path, file.sizeBytes ?? 0])
+      ),
+    })
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'deleting',
+      message: 'Deleting local model files.',
+      progress: 1,
+      bytesDownloaded: 246415360,
+      totalBytes: 246415360,
+      files: serverAsset.files,
+      updatedAt: 500,
+    })
+    expect(await screen.findByText('Removing local model files…')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Delete model' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Resume download' })).toBeNull()
+
+    serverAsset = buildAsset({
+      status: 'not-downloaded',
+      progress: 0,
+      bytesDownloaded: 0,
+      resumable: false,
+      downloadedBytes: {},
+    })
+    emitLocalModelLog({
+      engineId: 'local',
+      modelId,
+      selectedGroupId: 'q8',
+      status: 'not-downloaded',
+      message: 'Local model files were removed.',
+      progress: 0,
+      bytesDownloaded: 0,
+      totalBytes: 246415360,
+      files: serverAsset.files,
+      updatedAt: 600,
+    })
+    expect(await screen.findByRole('button', { name: 'Download model' })).toBeTruthy()
+    expect(screen.getByText('onnx/encoder_model_quantized.onnx')).toBeTruthy()
+    expect(screen.getByText('0 B / 50.4 MB')).toBeTruthy()
     expect(localModelsMock.subscribeLogs).toHaveBeenCalledTimes(1)
   })
 
