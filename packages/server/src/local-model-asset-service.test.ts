@@ -218,6 +218,7 @@ describe('LocalModelAssetService', () => {
   })
 
   it('persists byte-level progress while streaming a selected NMT file', async () => {
+    const releaseRemainingDownload = createDeferred<void>()
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
@@ -235,7 +236,7 @@ describe('LocalModelAssetService', () => {
             new ReadableStream<Uint8Array>({
               async start(controller) {
                 controller.enqueue(new Uint8Array([1, 2, 3, 4]))
-                await new Promise((resolve) => setTimeout(resolve, 20))
+                await releaseRemainingDownload.promise
                 controller.enqueue(new Uint8Array([5, 6, 7, 8, 9, 10]))
                 controller.close()
               },
@@ -310,17 +311,21 @@ describe('LocalModelAssetService', () => {
 
     await service.startDownload('onnx-community/opus-mt-en-zh', 'q4')
 
-    await waitForState(indexPath, (states) =>
-      states.some((entry) =>
-        entry.files?.some(
-          (file) =>
-            file.path === 'onnx/encoder_model_q4.onnx' &&
-            typeof file.downloadedBytes === 'number' &&
-            file.downloadedBytes > 0 &&
-            file.downloadedBytes < 10
+    try {
+      await waitForState(indexPath, (states) =>
+        states.some((entry) =>
+          entry.files?.some(
+            (file) =>
+              file.path === 'onnx/encoder_model_q4.onnx' &&
+              typeof file.downloadedBytes === 'number' &&
+              file.downloadedBytes > 0 &&
+              file.downloadedBytes < 10
+          )
         )
       )
-    )
+    } finally {
+      releaseRemainingDownload.resolve()
+    }
     await service.waitForModelTask('onnx-community/opus-mt-en-zh')
     await waitForDownloadedState(indexPath)
   })
