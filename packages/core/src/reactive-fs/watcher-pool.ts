@@ -1,5 +1,4 @@
-import { realpathSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolveRealPathThroughExistingAncestor } from './path-realpath.js'
 import {
   getProjectWatcher,
   type ProjectWatcher,
@@ -11,11 +10,7 @@ import {
  * 获取路径的真实路径（解析符号链接）
  */
 function getRealPath(path: string): string {
-  try {
-    return realpathSync(resolve(path))
-  } catch {
-    return resolve(path)
-  }
+  return resolveRealPathThroughExistingAncestor(path)
 }
 
 /**

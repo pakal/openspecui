@@ -28,7 +28,7 @@ describe('ConfigManager', () => {
 
   afterEach(async () => {
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 

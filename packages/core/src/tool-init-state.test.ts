@@ -28,7 +28,7 @@ describe('getToolInitStates', () => {
       process.env.CODEX_HOME = previousCodexHome
     }
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 

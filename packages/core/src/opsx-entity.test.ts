@@ -19,7 +19,7 @@ describe('OPSX entity detail', () => {
 
   afterEach(async () => {
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 

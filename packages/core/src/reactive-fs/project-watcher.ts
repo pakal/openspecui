@@ -1,18 +1,14 @@
 import type { AsyncSubscription, Event } from '@parcel/watcher'
-import { existsSync, lstatSync, realpathSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, lstatSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { resolveRealPathThroughExistingAncestor } from './path-realpath.js'
 
 /**
  * 获取路径的真实路径（解析符号链接）
  * 在 macOS 上，/var 是 /private/var 的符号链接
  */
 function getRealPath(path: string): string {
-  try {
-    return realpathSync(resolve(path))
-  } catch {
-    // 路径不存在时返回原始解析后的路径
-    return resolve(path)
-  }
+  return resolveRealPathThroughExistingAncestor(path)
 }
 
 /**
