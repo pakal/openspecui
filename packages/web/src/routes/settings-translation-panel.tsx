@@ -522,7 +522,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       trpcClient.localModels.delete.mutate(input),
   })
   const refreshLocalProfilesMutation = useMutation({
-    mutationFn: (input: { modelId?: string }) => trpcClient.localModels.refreshProfiles.mutate(input),
+    mutationFn: (input: { modelId?: string }) =>
+      trpcClient.localModels.refreshProfiles.mutate(input),
     onSuccess: (panelState) => {
       const queryKey = trpc.localModels.panelState.queryOptions({
         modelId: panelState.modelId,
@@ -648,8 +649,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       : Math.round((selectedBrowserRow?.progress ?? 0) * 100)
   const browserCheckLoading = browserSupportTable?.state === 'checking'
   const nmtModelId = nmtModel.trim()
-  const persistedLocalSelectedGroupId =
-    globalSettings?.translationEngines?.local?.selectedGroupId
+  const persistedLocalSelectedGroupId = globalSettings?.translationEngines?.local?.selectedGroupId
   const preferredLocalSelectedGroupId = nmtSelectedGroupId ?? persistedLocalSelectedGroupId
   const localPanelStateQuery = useQuery({
     ...trpc.localModels.panelState.queryOptions({
@@ -1292,11 +1292,6 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                 knownSize={nmtKnownSize}
                 modelId={nmtModelId}
               />
-              <p className="text-muted-foreground leading-5">
-                Local models stay at the top of the chooser. Remote Hugging Face search continues in
-                the background, and entries without a concrete ONNX size stay disabled until the
-                download cost is known.
-              </p>
             </div>
           </div>
         ) : null}

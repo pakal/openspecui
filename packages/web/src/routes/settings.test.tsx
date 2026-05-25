@@ -1,16 +1,19 @@
-import { LocalModelAssetStateSchema } from '@openspecui/core/translator'
 import type {
   LocalModelAssetLog,
   LocalModelAssetState,
   LocalModelCatalogItem,
   TranslationModelDownloadPlan,
 } from '@openspecui/core/translator'
+import { LocalModelAssetStateSchema } from '@openspecui/core/translator'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useSyncExternalStore, type ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './settings'
 
-function createLocalAssetStateForTest(input: Omit<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'> & Partial<Pick<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'>>): LocalModelAssetState {
+function createLocalAssetStateForTest(
+  input: Omit<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'> &
+    Partial<Pick<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'>>
+): LocalModelAssetState {
   return LocalModelAssetStateSchema.parse(input)
 }
 
@@ -2675,6 +2678,7 @@ describe('Settings', () => {
     expect(
       within(downloadFiles.closest('div') ?? document.body).queryByRole('button', { name: /q8/i })
     ).toBeNull()
+    expect(screen.queryByText(/Local models stay at the top of the chooser/i)).toBeNull()
     expect(q8Chip).toHaveTextContent('235 MB')
     expect(fp16Chip).toHaveTextContent('700 MB')
   })
