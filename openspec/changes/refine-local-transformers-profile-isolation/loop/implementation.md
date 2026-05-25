@@ -1,6 +1,6 @@
 ## Implementation State
 
-- Status: implemented and locally verified; latest PR checks are pending after CI hardening.
+- Status: implemented, locally verified, and latest PR checks passed.
 - Current branch: `fix/file-panel-release-patch`.
 - Current PR: <https://github.com/jixoai/openspecui/pull/171>.
 - OpenSpec status: ready for user acceptance; archive and merge remain intentionally pending.
@@ -56,7 +56,7 @@ Implemented execution order:
   - `pnpm typecheck`
   - `pnpm test:ci`
   - `pnpm test:browser:ci`
-- Previous GitHub PR checks passed on PR #171 before the final documentation update; latest checks must pass again after this CI-hardening commit:
+- Latest GitHub PR checks passed on PR #171 after the final CI-hardening commit:
   - Changeset Gate
   - CI Scope
   - Fast Gate
