@@ -27,6 +27,8 @@ import { LocalModelFetchCacheStore } from './local-model-fetch-cache-store.js'
 import { ensureProxyAwareFetchDispatcher } from './network-dispatcher.js'
 import { searchLocalModels } from './translation-model-catalog.js'
 
+type TranslationEngineSettingsSnapshot = Awaited<ReturnType<GlobalSettingsManager['readSettings']>>
+
 export interface TranslationEngineListItem extends TranslationEngineManifest {
   selected: boolean
   status: 'available' | 'unavailable'
@@ -124,24 +126,31 @@ export class TranslationEngineService {
           if (input.engineId === 'browser') {
             throw new Error('Browser translator runs in the browser runtime.')
           }
+          const settingsSnapshot = await this.globalSettingsManager.readSettings()
+          const effectiveModel = resolveBatchTranslateModel(input, settingsSnapshot)
+          const effectiveSelectedGroupId =
+            input.engineId === 'local'
+              ? (input.selectedGroupId ?? settingsSnapshot.translationEngines.local.selectedGroupId)
+              : undefined
           const dtype = await this.readLocalDtype(
             input.engineId,
-            input.model,
-            input.selectedGroupId
+            effectiveModel,
+            effectiveSelectedGroupId
           )
-          if (input.engineId === 'local' && input.model) {
-            await this.assertLocalModelReady(input.model, input.selectedGroupId)
+          if (input.engineId === 'local' && effectiveModel) {
+            await this.assertLocalModelReady(effectiveModel, effectiveSelectedGroupId)
           }
-          const factory = await this.loadFactory(input.engineId, input.model)
+          const runtimeConfig =
+            input.engineId === 'local' && effectiveModel
+              ? await this.readLocalRuntimeConfig(effectiveModel, effectiveSelectedGroupId)
+              : undefined
+          const factory = await this.loadFactory(input.engineId, effectiveModel, settingsSnapshot)
           const translator = await factory.create({
             sourceLanguage: input.sourceLanguage,
             targetLanguage: input.targetLanguage,
-            model: input.model,
+            model: effectiveModel,
             dtype,
-            runtimeConfig:
-              input.engineId === 'local' && input.model
-                ? await this.readLocalRuntimeConfig(input.model, input.selectedGroupId)
-                : undefined,
+            runtimeConfig,
             signal: controller.signal,
           })
           try {
@@ -253,9 +262,10 @@ export class TranslationEngineService {
 
   protected async loadFactory(
     engineId: ServiceTranslationEngineId,
-    model: string | undefined
+    model: string | undefined,
+    settingsSnapshot?: TranslationEngineSettingsSnapshot
   ): Promise<TranslatorFactory> {
-    const globalSettings = await this.globalSettingsManager.readSettings()
+    const globalSettings = settingsSnapshot ?? (await this.globalSettingsManager.readSettings())
     if (engineId === 'local') {
       const mod = (await import('@openspecui/local-translator')) as unknown as {
         createLocalTranslatorFactory: (options?: {
@@ -283,7 +293,16 @@ export class TranslationEngineService {
       model: model ?? globalSettings.translationEngines.openai.model,
     })
   }
+}
 
+function resolveBatchTranslateModel(
+  input: BatchTranslateInput,
+  settings: TranslationEngineSettingsSnapshot
+): string | undefined {
+  if (input.model) return input.model
+  if (input.engineId === 'local') return settings.translationEngines.local.model
+  if (input.engineId === 'openai') return settings.translationEngines.openai.model
+  return undefined
 }
 
 function selectPersistedLocalPlan(

@@ -3,6 +3,7 @@ import {
   GlobalSettingsManager,
   LocalModelAssetStateSchema,
   type BatchTranslateEvent,
+  type ServiceTranslationEngineId,
   type TranslationModelDownloadPlan,
   type TranslatorFactory,
 } from '@openspecui/core'
@@ -26,8 +27,9 @@ vi.mock('@huggingface/hub', async (importOriginal) => {
 
 type TestableTranslationEngineService = TranslationEngineService & {
   loadFactory(
-    engineId: 'local' | 'openai',
-    model: string | undefined
+    engineId: ServiceTranslationEngineId,
+    model: string | undefined,
+    settingsSnapshot?: Awaited<ReturnType<GlobalSettingsManager['readSettings']>>
   ): Promise<TranslatorFactory>
 }
 
@@ -323,6 +325,61 @@ describe('TranslationEngineService', () => {
     )
     expect(create).not.toHaveBeenCalled()
   })
+
+  it('uses one immutable settings snapshot for a batch translation subscription', async () => {
+    const settingsManager = new GlobalSettingsManager(settingsPath)
+    await settingsManager.writeSettings({
+      translationEngines: {
+        openai: {
+          baseUrl: 'https://api.initial.example/v1',
+          token: 'initial-token',
+          model: 'initial-model',
+        },
+      },
+    })
+
+    const snapshotModelNames: string[] = []
+    const create = vi.fn(async () => {
+      await settingsManager.writeSettings({
+        translationEngines: {
+          openai: {
+            baseUrl: 'https://api.changed.example/v1',
+            token: 'changed-token',
+            model: 'changed-model',
+          },
+        },
+      })
+      return {
+        batchTranslate: async function* (): AsyncGenerator<BatchTranslateEvent> {
+          yield { index: 0, output: 'Hallo' }
+        },
+        destroy: vi.fn(),
+      }
+    })
+    vi.spyOn(service as TestableTranslationEngineService, 'loadFactory').mockImplementation(
+      async (_engineId, _model, settingsSnapshot) => {
+        snapshotModelNames.push(settingsSnapshot?.translationEngines.openai.model ?? 'missing')
+        return { create }
+      }
+    )
+
+    const events = await collectBatchEvents(
+      service.batchTranslate({
+        engineId: 'openai',
+        sourceLanguage: 'en',
+        targetLanguage: 'de',
+        inputs: ['Hello'],
+      })
+    )
+
+    expect(events).toEqual([{ index: 0, output: 'Hallo' }])
+    expect(snapshotModelNames).toEqual(['initial-model'])
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'initial-model',
+      })
+    )
+  })
 })
 
 function createLocalDownloadPlan(
@@ -360,7 +417,11 @@ function createLocalDownloadPlan(
         files: [
           { path: 'config.json', sizeBytes: configBytes, required: true },
           { path: `onnx/encoder_model_${dtype}.onnx`, sizeBytes: encoderBytes, required: true },
-          { path: `onnx/decoder_model_merged_${dtype}.onnx`, sizeBytes: decoderBytes, required: true },
+          {
+            path: `onnx/decoder_model_merged_${dtype}.onnx`,
+            sizeBytes: decoderBytes,
+            required: true,
+          },
         ],
       },
     ],
@@ -407,9 +468,16 @@ async function writePersistedLocalAssetPlan(
                     path: file.path,
                     sizeBytes: file.sizeBytes,
                     downloadedBytes:
-                      status === 'downloaded' ? file.sizeBytes : file.path === 'config.json' ? file.sizeBytes : 0,
+                      status === 'downloaded'
+                        ? file.sizeBytes
+                        : file.path === 'config.json'
+                          ? file.sizeBytes
+                          : 0,
                     required: file.required,
-                    status: status === 'downloaded' || file.path === 'config.json' ? 'downloaded' : 'not-downloaded',
+                    status:
+                      status === 'downloaded' || file.path === 'config.json'
+                        ? 'downloaded'
+                        : 'not-downloaded',
                   })),
                 },
               }

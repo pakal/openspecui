@@ -53,10 +53,12 @@ export function useDocumentTranslation(
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DocumentTranslationResult | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const generationRef = useRef(0)
   const latestStartRef = useRef<(() => Promise<void>) | null>(null)
   const { activation } = useDocumentTranslationActivation()
 
   const cancel = useCallback(() => {
+    generationRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
     setStatus('source')
@@ -65,6 +67,7 @@ export function useDocumentTranslation(
   }, [])
 
   const reset = useCallback(() => {
+    generationRef.current += 1
     abortRef.current?.abort()
     abortRef.current = null
     setStatus('source')
@@ -75,6 +78,7 @@ export function useDocumentTranslation(
   useEffect(() => reset, [reset])
 
   useEffect(() => {
+    generationRef.current += 1
     setCapability(null)
     setBrowserSupportTable(null)
     setResult(null)
@@ -281,6 +285,8 @@ export function useDocumentTranslation(
 
     abortRef.current?.abort()
     const controller = new AbortController()
+    const generationId = generationRef.current + 1
+    generationRef.current = generationId
     abortRef.current = controller
     setError(null)
     setStatus('initializing')
@@ -345,7 +351,13 @@ export function useDocumentTranslation(
               : undefined,
         },
         (patch) => {
-          if (controller.signal.aborted || abortRef.current !== controller) return
+          if (
+            controller.signal.aborted ||
+            abortRef.current !== controller ||
+            generationRef.current !== generationId
+          ) {
+            return
+          }
           setResult((current) =>
             applyDocumentTranslationPatch(current, patch, {
               displayMode: config.displayMode,
@@ -354,15 +366,27 @@ export function useDocumentTranslation(
           )
         }
       )
-      if (controller.signal.aborted) return
+      if (
+        controller.signal.aborted ||
+        abortRef.current !== controller ||
+        generationRef.current !== generationId
+      ) {
+        return
+      }
       setResult(nextResult)
       setStatus('translated')
     } catch (translationError) {
-      if (controller.signal.aborted) return
+      if (
+        controller.signal.aborted ||
+        abortRef.current !== controller ||
+        generationRef.current !== generationId
+      ) {
+        return
+      }
       setError(translationError instanceof Error ? translationError.message : 'Translation failed.')
       setStatus('error')
     } finally {
-      if (abortRef.current === controller) {
+      if (abortRef.current === controller && generationRef.current === generationId) {
         abortRef.current = null
       }
     }

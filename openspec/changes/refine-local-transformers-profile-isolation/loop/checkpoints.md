@@ -50,19 +50,19 @@
 
 ## 6. Translation Task Lifecycle
 
-- [ ] 6.1 Page-owned translation tasks abort on page unmount.
-- [ ] 6.2 Settings changes affect only the next `batchTranslate` invocation.
-- [ ] 6.3 `batchTranslate` uses immutable runtime snapshots and scoped pipeline leases.
+- [x] 6.1 Page-owned translation tasks abort on page unmount.
+- [x] 6.2 Settings changes affect only the next `batchTranslate` invocation.
+- [x] 6.3 `batchTranslate` uses immutable runtime snapshots and scoped pipeline leases.
 - [x] 6.4 Deleting an in-use group aborts related translation work before removing files.
-- [ ] 6.5 Document translation uses generation ids and rejects stale late patches after content mutation.
-- [ ] 6.6 Translation cache reuse remains effective when re-entering a page after abort.
+- [x] 6.5 Document translation uses generation ids and rejects stale late patches after content mutation.
+- [x] 6.6 Translation cache reuse remains effective when re-entering a page after abort.
 
 ## 7. Verification
 
 - [x] 7.1 Server unit tests cover profile manifest creation, commit hash persistence, refresh, parse failure, and pinned-revision download.
 - [x] 7.2 Server unit tests cover concurrent downloads, pause/resume, restart reconciliation, delete, selected group clearing, and chip status stability.
 - [x] 7.3 Web unit tests cover refresh button, profile loading/failure states, chip style semantics, chip switching, historical deletion, and Download Files empty selection.
-- [ ] 7.4 Web unit tests cover document translation unmount abort and stale generation patch rejection.
+- [x] 7.4 Web unit tests cover document translation unmount abort and stale generation patch rejection.
 - [x] 7.5 Focused integration checks cover two concurrent group downloads, pause one while another continues, restart with partial bytes, profile refresh with old/new chips, and pinned commit download.
 - [x] 7.6 `pnpm --filter @openspecui/server typecheck` passes.
 - [x] 7.7 `pnpm --filter @openspecui/web typecheck` passes.
