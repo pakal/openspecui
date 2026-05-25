@@ -17,6 +17,10 @@ import {
 import { isStaticMode } from '@/lib/static-mode'
 import { runSingleTranslation } from '@/lib/translate-service'
 import { findTranslationLanguage, searchTranslationLanguages } from '@/lib/translation-languages'
+import {
+  DEFAULT_TRANSLATION_TEST_SOURCE_LANGUAGE,
+  getTranslationTestSourceSample,
+} from '@/lib/translation-test-samples'
 import { trpc, trpcClient } from '@/lib/trpc'
 import { useConfigSubscription, useGlobalSettingsSubscription } from '@/lib/use-subscription'
 import {
@@ -67,18 +71,7 @@ const DEFAULT_TRANSLATION_TARGET_LANGUAGE = 'zh'
 const DEFAULT_TRANSLATION_DISPLAY_MODE: DocumentTranslationDisplayMode = 'direct'
 const DEFAULT_TRANSLATION_CACHE_ENABLED = false
 const DEFAULT_LOCAL_MODEL_ID = 'Xenova/opus-mt-no-de'
-const DEFAULT_TRANSLATION_SMOKE_SOURCE = 'My name is Sarah and I live in London.'
-const DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE = 'en'
-const TRANSLATION_TEST_PLACEHOLDERS: Record<string, string> = {
-  en: DEFAULT_TRANSLATION_SMOKE_SOURCE,
-  no: 'Dette er en liten oversettelsestest fra norsk til tysk.',
-  zh: '这是一句用于验证翻译引擎的短句。',
-  de: 'Dies ist ein kurzer Satz zum Testen der Übersetzung.',
-  fr: 'Ceci est une courte phrase pour tester la traduction.',
-  ja: 'これは翻訳エンジンを確認するための短い文です。',
-  ko: '이 문장은 번역 엔진을 확인하기 위한 짧은 문장입니다.',
-  es: 'Esta es una frase corta para probar la traducción.',
-}
+const DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE = DEFAULT_TRANSLATION_TEST_SOURCE_LANGUAGE
 
 const TRANSLATION_DISPLAY_MODE_OPTIONS = [
   { value: 'direct', label: 'Direct' },
@@ -201,13 +194,7 @@ function getTranslationSmokePreset(): {
 }
 
 function getTranslationTestPlaceholder(sourceLanguage: string): string {
-  const normalized = sourceLanguage.trim().toLowerCase()
-  const primary = normalized.split(/[-_]/, 1)[0] ?? normalized
-  return (
-    TRANSLATION_TEST_PLACEHOLDERS[normalized] ??
-    TRANSLATION_TEST_PLACEHOLDERS[primary] ??
-    DEFAULT_TRANSLATION_SMOKE_SOURCE
-  )
+  return getTranslationTestSourceSample(sourceLanguage)
 }
 
 function replaceQueryCacheData<TData>(
@@ -288,6 +275,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const [nmtLocalOptions, setNmtLocalOptions] = useState<LocalModelCatalogItem[]>([])
   const [nmtRemoteOptions, setNmtRemoteOptions] = useState<LocalModelCatalogItem[]>([])
   const [nmtRemoteLoading, setNmtRemoteLoading] = useState(false)
+  const [nmtSearchOpen, setNmtSearchOpen] = useState(false)
+  const [nmtSearchTouched, setNmtSearchTouched] = useState(false)
   const [translationTestOpen, setTranslationTestOpen] = useState(false)
   const [smokeSourceLanguage, setSmokeSourceLanguage] = useState(
     DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE
@@ -396,6 +385,10 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   useEffect(() => {
     if (translationEngineId !== 'local') return
     const requestId = `local-search-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    if (!nmtSearchOpen || !nmtSearchTouched) {
+      setNmtRemoteLoading(false)
+      return
+    }
     setNmtRemoteLoading(true)
     const subscription = trpcClient.localModels.searchRemoteStream.subscribe(
       {
@@ -421,7 +414,14 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [nmtDebouncedQuery, nmtHfEndpoint, translationEngineId, translationTargetLanguage])
+  }, [
+    nmtDebouncedQuery,
+    nmtHfEndpoint,
+    nmtSearchOpen,
+    nmtSearchTouched,
+    translationEngineId,
+    translationTargetLanguage,
+  ])
 
   useEffect(() => {
     if (inStaticMode) return
@@ -1202,6 +1202,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     options={nmtCatalogOptions}
                     remoteLoading={nmtRemoteLoading}
                     onQueryChange={setNmtModelQuery}
+                    onOpenChange={setNmtSearchOpen}
+                    onSearchInput={() => setNmtSearchTouched(true)}
                     onChange={(nextModel) => {
                       setNmtModel(nextModel)
                       setNmtModelQuery(nextModel)
@@ -1392,6 +1394,8 @@ function LocalModelCombobox({
   options,
   remoteLoading,
   onQueryChange,
+  onOpenChange,
+  onSearchInput,
   onChange,
   onCommit,
 }: {
@@ -1400,6 +1404,8 @@ function LocalModelCombobox({
   options: LocalModelCatalogItem[]
   remoteLoading: boolean
   onQueryChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onSearchInput: () => void
   onChange: (value: string) => void
   onCommit: (value: string) => Promise<void> | void
 }) {
@@ -1459,9 +1465,14 @@ function LocalModelCombobox({
     setOpen(false)
   }, [])
 
-  const handleToggle = useCallback((event: ReactToggleEvent<HTMLDivElement>) => {
-    setOpen(event.newState === 'open')
-  }, [])
+  const handleToggle = useCallback(
+    (event: ReactToggleEvent<HTMLDivElement>) => {
+      const nextOpen = event.newState === 'open'
+      setOpen(nextOpen)
+      onOpenChange(nextOpen)
+    },
+    [onOpenChange]
+  )
 
   return (
     <div>
@@ -1510,7 +1521,10 @@ function LocalModelCombobox({
             aria-autocomplete="list"
             aria-controls={listboxId}
             value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
+            onChange={(event) => {
+              onSearchInput()
+              onQueryChange(event.target.value)
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Escape') hidePopover()
               if (event.key === 'Enter') {

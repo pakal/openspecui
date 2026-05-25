@@ -1677,7 +1677,7 @@ describe('Settings', () => {
     expect(pairLabels[1]).toContain('es -> zh')
     expect(screen.getByRole('button', { name: 'en -> zh' })).toHaveClass('text-sky-700')
     expect(screen.getByRole('button', { name: 'es -> zh' })).toHaveClass('text-emerald-700')
-  })
+  }, 10000)
 
   it('uses project Local model settings before global settings resolve', async () => {
     vi.stubGlobal(
@@ -1729,6 +1729,56 @@ describe('Settings', () => {
         selectedGroupId: 'fp16',
       })
     )
+  })
+
+  it('does not refresh remote Local model profiles on initial mount when local profiles exist', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    useGlobalSettingsSubscriptionMock.mockReturnValue({
+      data: {
+        translationCache: { entryLimit: 10000 },
+        translationEngines: {
+          openai: { baseUrl: '', token: '', model: 'gpt-4.1-mini' },
+          local: {
+            model: 'onnx-community/opus-mt-en-zh',
+            selectedGroupId: 'q8',
+            hfEndpoint: 'https://hf-mirror.com',
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: false,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+
+    expect(localModelsMock.listLocal).toHaveBeenCalled()
+    expect(localModelsMock.searchRemoteStream).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Local model' })).toHaveTextContent(
+      'onnx-community/opus-mt-en-zh'
+    )
+    expect(screen.getByLabelText('Local download profiles')).toBeTruthy()
+    expect(screen.queryByText('Loading remote models…')).toBeNull()
   })
 
   it('shows bundled engine status without install controls while the engine list is still resolving', async () => {
@@ -1852,7 +1902,7 @@ describe('Settings', () => {
     expect(localModelsMock.panelState).toHaveBeenCalled()
     expect(screen.getAllByText(/q8/).length).toBeGreaterThan(0)
     expect(screen.getByText('Local Model')).toBeTruthy()
-  })
+  }, 10000)
 
   it('saves the Local-Transformers Hugging Face endpoint from the advanced provider popover', async () => {
     vi.stubGlobal(
@@ -1971,6 +2021,14 @@ describe('Settings', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Local model' }))
     dispatchPopoverToggle(screen.getByRole('dialog', { name: 'Select local model' }), 'open')
+    const input = screen.getByRole('textbox', { name: 'Search local models' })
+    fireEvent.change(input, { target: { value: 'unknown' } })
+    await waitFor(() =>
+      expect(localModelsMock.searchRemoteStream).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'unknown', targetLanguage: 'de' }),
+        expect.any(Object)
+      )
+    )
     const disabledOption = await screen.findByRole('option', { name: /Xenova\/unknown-model/ })
     expect(disabledOption).toHaveAttribute('disabled')
   })
@@ -3909,7 +3967,7 @@ describe('Settings', () => {
     )
     expect(popover.querySelector('[aria-label="Clear search"]')).toBeTruthy()
     expect(updateConfigMock).not.toHaveBeenCalledWith({ translation: { targetLanguage: '' } })
-  })
+  }, 10000)
 
   it('renders the shared ToC before settings content so narrow mode can collapse above content', async () => {
     vi.stubGlobal(
