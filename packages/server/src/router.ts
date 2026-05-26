@@ -15,9 +15,9 @@ import type {
   OpsxKernel,
 } from '@openspecui/core'
 import {
+  BatchTranslateInputSchema,
   CodeEditorThemeSchema,
   DashboardConfigSchema,
-  BatchTranslateInputSchema,
   DocumentTranslationConfigSchema,
   getAllTools,
   getAvailableTools,
@@ -221,7 +221,11 @@ export const globalSettingsRouter = router({
         translationEngines: z
           .object({
             openai: TranslationOpenAISettingsSchema.partial().optional(),
-            local: TranslationLocalSettingsSchema.partial().optional(),
+            local: TranslationLocalSettingsSchema.partial()
+              .extend({
+                selectedGroupId: z.string().min(1).nullable().optional(),
+              })
+              .optional(),
           })
           .optional(),
       })
@@ -355,6 +359,26 @@ export const localModelsRouter = router({
       return ctx.localModelAssetService.readSelectedModelState(input.modelId, input.selectedGroupId)
     }),
 
+  panelState: publicProcedure
+    .input(
+      z.object({
+        modelId: z.string().min(1),
+        selectedGroupId: z.string().min(1).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const asset = await ctx.localModelAssetService.readSelectedModelState(
+        input.modelId,
+        input.selectedGroupId
+      )
+      return {
+        modelId: input.modelId,
+        selectedGroupId: input.selectedGroupId ?? asset.plan?.selectedGroupId,
+        asset,
+        downloadPlan: asset.plan ?? null,
+      }
+    }),
+
   subscribeLogs: publicProcedure.subscription(({ ctx }) => {
     return ctx.localModelAssetService.subscribeLogs()
   }),
@@ -374,42 +398,76 @@ export const localModelsRouter = router({
     .input(
       z.object({
         modelId: z.string().min(1),
+        groupId: z.string().min(1).optional(),
         selectedGroupId: z.string().min(1).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.localModelAssetService.startDownload(input.modelId, input.selectedGroupId)
+      return ctx.localModelAssetService.startDownload(
+        input.modelId,
+        input.groupId ?? input.selectedGroupId
+      )
     }),
 
   pause: publicProcedure
     .input(
       z.object({
         modelId: z.string().min(1),
+        groupId: z.string().min(1).optional(),
+        selectedGroupId: z.string().min(1).optional(),
       })
     )
     .mutation(({ ctx, input }) => {
-      return ctx.localModelAssetService.pauseDownload(input.modelId)
+      return ctx.localModelAssetService.pauseDownload(
+        input.modelId,
+        input.groupId ?? input.selectedGroupId
+      )
     }),
 
   resume: publicProcedure
     .input(
       z.object({
         modelId: z.string().min(1),
+        groupId: z.string().min(1).optional(),
         selectedGroupId: z.string().min(1).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      return ctx.localModelAssetService.resumeDownload(input.modelId, input.selectedGroupId)
+      return ctx.localModelAssetService.resumeDownload(
+        input.modelId,
+        input.groupId ?? input.selectedGroupId
+      )
     }),
 
   delete: publicProcedure
     .input(
       z.object({
         modelId: z.string().min(1),
+        groupId: z.string().min(1).optional(),
+        selectedGroupId: z.string().min(1).optional(),
       })
     )
     .mutation(({ ctx, input }) => {
-      return ctx.localModelAssetService.deleteModel(input.modelId)
+      return ctx.localModelAssetService.deleteModel(
+        input.modelId,
+        input.groupId ?? input.selectedGroupId
+      )
+    }),
+
+  refreshProfiles: publicProcedure
+    .input(
+      z.object({
+        modelId: z.string().min(1).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const asset = await ctx.localModelAssetService.refreshProfiles(input.modelId)
+      return {
+        modelId: asset.modelId,
+        selectedGroupId: asset.selectedGroupId ?? asset.plan?.selectedGroupId,
+        asset,
+        downloadPlan: asset.plan ?? null,
+      }
     }),
 })
 
@@ -1118,7 +1176,7 @@ export const configRouter = router({
                 local: z
                   .object({
                     model: z.string().min(1).optional(),
-                    selectedGroupId: z.string().min(1).optional(),
+                    selectedGroupId: z.string().min(1).nullable().optional(),
                   })
                   .optional(),
                 openai: z.object({ model: z.string().min(1).optional() }).optional(),

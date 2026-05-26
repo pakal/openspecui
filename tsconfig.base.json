@@ -29,6 +29,9 @@
       "@openspecui/core/document-translation": ["packages/core/src/document-translation.ts"],
       "@openspecui/core/translator": ["packages/core/src/translator.ts"],
       "@openspecui/core/local-download-profiles": ["packages/core/src/local-download-profiles.ts"],
+      "@openspecui/core/translation-language-pair": [
+        "packages/core/src/translation-language-pair.ts"
+      ],
       "@openspecui/core/notifications": ["packages/core/src/notifications.ts"],
       "@openspecui/core/openspec-annotations": ["packages/core/src/openspec-annotations.ts"],
       "@openspecui/core/openspec-projection": ["packages/core/src/openspec-projection.ts"],

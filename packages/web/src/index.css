@@ -206,6 +206,7 @@
     @apply border-border;
     corner-shape: bevel;
     scrollbar-width: thin;
+    accent-color: var(--primary);
   }
   ::-webkit-scrollbar-track {
     background-color: transparent;
@@ -260,6 +261,12 @@
       order: 2;
       width: 100%;
     }
+  }
+}
+
+@layer utilities {
+  .rounded {
+    @apply rounded-sm;
   }
 }
 

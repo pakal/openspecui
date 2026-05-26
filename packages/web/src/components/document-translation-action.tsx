@@ -1,7 +1,10 @@
 import { Button } from '@/components/button'
+import { Tooltip } from '@/components/tooltip'
 import { useDocumentTranslationActivation } from '@/lib/document-translation-session-state'
+import { resolveDocumentTranslationConfig } from '@/lib/resolve-document-translation-config'
 import type { TranslateServiceStatus } from '@/lib/translate-service-status'
 import { useDocumentTranslation } from '@/lib/use-document-translation'
+import { useGlobalSettingsSubscription } from '@/lib/use-subscription'
 import {
   DocumentTranslationConfigSchema,
   type DocumentTranslationConfig,
@@ -36,12 +39,15 @@ export function useDocumentTranslationRenderPlugin({
   markdown: string | undefined
   translationConfig?: DocumentTranslationConfigInput
 }): MarkdownRenderPluginResult {
+  const { data: globalSettings } = useGlobalSettingsSubscription()
   const resolvedTranslationConfig = useMemo(
     () =>
       translationConfig === undefined
         ? undefined
-        : DocumentTranslationConfigSchema.parse(translationConfig),
-    [translationConfig]
+        : DocumentTranslationConfigSchema.parse(
+            resolveDocumentTranslationConfig(translationConfig, globalSettings)
+          ),
+    [globalSettings, translationConfig]
   )
   const session = useDocumentTranslation(markdown ?? '', resolvedTranslationConfig)
   const canTranslate =
@@ -103,6 +109,7 @@ function DocumentTranslationAction({
     <DocumentTranslationButton
       capability={session.capability}
       enabled={enabled}
+      error={session.error}
       serviceStatus={session.serviceStatus}
       status={session.status}
       onActivate={() => {
@@ -146,9 +153,10 @@ function createTranslationProjection(result: ReturnType<typeof useDocumentTransl
   blockAnnotations: MarkdownBlockAnnotation[]
 } {
   if (!result) return { blockAnnotations: [] }
+  const segments = Array.isArray(result.segments) ? result.segments : []
 
   const segmentByOffset = new Map(
-    result.segments
+    segments
       .filter((segment) => segment.target)
       .map((segment) => [segment.sourceStartOffset, segment])
   )
@@ -177,7 +185,7 @@ function createTranslationProjection(result: ReturnType<typeof useDocumentTransl
         return createTranslatedHeadingTransform(input, segment, result.displayMode)
       },
     },
-    blockAnnotations: result.segments
+    blockAnnotations: segments
       .filter((segment) => segment.target && segment.kind !== 'heading')
       .map(
         (segment): MarkdownBlockAnnotation => ({
@@ -355,12 +363,14 @@ function sanitizeTranslatedProperties(properties: Properties): Properties {
 function DocumentTranslationButton({
   capability,
   enabled,
+  error,
   serviceStatus,
   status,
   onActivate,
 }: {
   capability: ReturnType<typeof useDocumentTranslation>['capability']
   enabled: boolean
+  error: string | null
   serviceStatus: TranslateServiceStatus
   status: ReturnType<typeof useDocumentTranslation>['status']
   onActivate: () => void
@@ -370,12 +380,15 @@ function DocumentTranslationButton({
   const isSettingsDisabled = !enabled
   const isTranslated = status === 'translated'
   const isBusy = status === 'initializing' || status === 'translating'
+  const isError = status === 'error'
   const ariaLabel = isServiceUnavailable
     ? 'Translation unavailable'
-      : isSettingsDisabled
-        ? 'Configure translation'
-        : isServiceChecking
-          ? 'Checking translation'
+    : isSettingsDisabled
+      ? 'Configure translation'
+      : isServiceChecking
+        ? 'Checking translation'
+        : isError
+          ? 'Retry translation'
           : isBusy
             ? 'Cancel translation'
             : isTranslated
@@ -385,50 +398,57 @@ function DocumentTranslationButton({
     ? (serviceStatus.message ?? capability?.message ?? 'Translation is unavailable.')
     : isSettingsDisabled
       ? 'Translation is disabled in settings.'
-      : ariaLabel
+      : isError
+        ? `${error ?? 'Translation failed.'} Click to retry.`
+        : ariaLabel
 
   return (
-    <Button
-      size="icon-sm"
-      variant="secondary"
-      disabled={isServiceUnavailable || isServiceChecking}
-      aria-disabled={isSettingsDisabled ? true : undefined}
-      onClick={(event) => {
-        event.stopPropagation()
-        onActivate()
-      }}
-      title={title}
-      aria-label={ariaLabel}
-      data-translation-action-state={
-        isServiceUnavailable
-          ? 'unavailable'
-          : isServiceChecking
-            ? 'checking'
+    <Tooltip content={title} delay={0}>
+      <Button
+        size="icon-sm"
+        variant="secondary"
+        disabled={isServiceUnavailable || isServiceChecking}
+        aria-disabled={isSettingsDisabled ? true : undefined}
+        onClick={(event) => {
+          event.stopPropagation()
+          onActivate()
+        }}
+        aria-label={ariaLabel}
+        data-translation-action-state={
+          isServiceUnavailable
+            ? 'unavailable'
+            : isServiceChecking
+              ? 'checking'
+              : isSettingsDisabled
+                ? 'settings-disabled'
+                : isError
+                  ? 'error'
+                  : isBusy
+                    ? 'busy'
+                    : isTranslated
+                      ? 'translated'
+                      : 'ready'
+        }
+        className={
+          isServiceUnavailable || isServiceChecking
+            ? 'border-border bg-muted text-muted-foreground disabled:border-border disabled:bg-muted disabled:text-muted-foreground'
             : isSettingsDisabled
-              ? 'settings-disabled'
-              : isBusy
-                ? 'busy'
+              ? 'border-border bg-muted/40 text-muted-foreground opacity-70'
+              : isError
+                ? 'border-amber-500/50 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400'
                 : isTranslated
-                  ? 'translated'
-                  : 'ready'
-      }
-      className={
-        isServiceUnavailable || isServiceChecking
-          ? 'border-border bg-muted text-muted-foreground disabled:border-border disabled:bg-muted disabled:text-muted-foreground'
-          : isSettingsDisabled
-            ? 'border-border bg-muted/40 text-muted-foreground opacity-70'
-            : isTranslated
-              ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
-              : 'border-primary text-primary hover:bg-primary/10'
-      }
-    >
-      {isBusy || isServiceChecking ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : isServiceUnavailable ? (
-        <AlertTriangle className="h-4 w-4" />
-      ) : (
-        <Languages className="h-4 w-4" />
-      )}
-    </Button>
+                  ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'border-primary text-primary hover:bg-primary/10'
+        }
+      >
+        {isBusy || isServiceChecking ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : isServiceUnavailable || isError ? (
+          <AlertTriangle className="h-4 w-4" />
+        ) : (
+          <Languages className="h-4 w-4" />
+        )}
+      </Button>
+    </Tooltip>
   )
 }

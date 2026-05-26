@@ -1,51 +1,65 @@
 import type { BrowserTranslationSupportTableState } from '@/lib/browser-translation'
 import { DOCUMENT_TRANSLATION_SESSION_STORAGE_KEY } from '@/lib/document-translation-session-state'
-import type { LocalModelAssetState } from '@openspecui/core/translator'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { LocalModelAssetStateSchema, type LocalModelAssetState } from '@openspecui/core/translator'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MarkdownViewer } from './markdown-viewer'
+
+function createLocalAssetStateForTest(
+  input: Omit<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'> &
+    Partial<Pick<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'>>
+): LocalModelAssetState {
+  return LocalModelAssetStateSchema.parse(input)
+}
 
 const translateMarkdownDocumentProgressivelyMock = vi.hoisted(() => vi.fn())
 const navigateMock = vi.hoisted(() => vi.fn())
 const getBrowserSupportTableStateMock = vi.hoisted(() =>
-  vi.fn<(targetLanguage: string) => BrowserTranslationSupportTableState | null>((targetLanguage) => ({
-    state: 'ready',
-    message: 'Browser translation pairs: 1 ready.',
-    table: {
-      targetLanguage,
-      checked: 1,
-      total: 1,
-      updatedAt: 1,
-      rows: [
-        {
-          sourceLanguage: 'en',
-          targetLanguage,
-          availability: 'available',
-        },
-      ],
-    },
-  }))
+  vi.fn<(targetLanguage: string) => BrowserTranslationSupportTableState | null>(
+    (targetLanguage) => ({
+      state: 'ready',
+      message: 'Browser translation pairs: 1 ready.',
+      table: {
+        targetLanguage,
+        checked: 1,
+        total: 1,
+        updatedAt: 1,
+        rows: [
+          {
+            sourceLanguage: 'en',
+            targetLanguage,
+            availability: 'available',
+          },
+        ],
+      },
+    })
+  )
 )
 const scanBrowserTranslationPairsMock = vi.hoisted(() =>
-  vi.fn(async (targetLanguage: string): Promise<BrowserTranslationSupportTableState> => ({
-    state: 'ready',
-    message: 'Browser translation pairs: 1 ready.',
-    table: {
-      targetLanguage,
-      checked: 1,
-      total: 1,
-      updatedAt: 1,
-      rows: [
-        {
-          sourceLanguage: 'en',
-          targetLanguage,
-          availability: 'available',
-        },
-      ],
-    },
-  }))
+  vi.fn(
+    async (targetLanguage: string): Promise<BrowserTranslationSupportTableState> => ({
+      state: 'ready',
+      message: 'Browser translation pairs: 1 ready.',
+      table: {
+        targetLanguage,
+        checked: 1,
+        total: 1,
+        updatedAt: 1,
+        rows: [
+          {
+            sourceLanguage: 'en',
+            targetLanguage,
+            availability: 'available',
+          },
+        ],
+      },
+    })
+  )
 )
 const nmtModelStateMock = vi.hoisted(() => vi.fn())
+const nmtModelPanelStateMock = vi.hoisted(() => vi.fn())
+const translationCacheReadMock = vi.hoisted(() => vi.fn())
+const translationCacheWriteMock = vi.hoisted(() => vi.fn())
 
 vi.mock('@/lib/browser-translation', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/browser-translation')>()
@@ -61,19 +75,26 @@ vi.mock('@tanstack/react-router', () => ({
   useNavigate: () => navigateMock,
 }))
 
+vi.mock('@/lib/use-subscription', () => ({
+  useGlobalSettingsSubscription: () => ({ data: undefined }),
+}))
+
 vi.mock('@/lib/trpc', () => ({
   trpcClient: {
     localModels: {
       state: {
         query: nmtModelStateMock,
       },
+      panelState: {
+        query: nmtModelPanelStateMock,
+      },
     },
     translationCache: {
       read: {
-        query: vi.fn(),
+        query: translationCacheReadMock,
       },
       write: {
-        mutate: vi.fn(),
+        mutate: translationCacheWriteMock,
       },
     },
     translationEngines: {
@@ -85,10 +106,26 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 describe('MarkdownViewer translation plugin', () => {
+  beforeEach(() => {
+    translationCacheReadMock.mockResolvedValue(null)
+    translationCacheWriteMock.mockResolvedValue({ accepted: true })
+    nmtModelStateMock.mockResolvedValue(createDownloadedLocalAssetState())
+    nmtModelPanelStateMock.mockImplementation(
+      async ({ modelId, selectedGroupId }: { modelId: string; selectedGroupId?: string }) => ({
+        modelId,
+        selectedGroupId,
+        asset: await nmtModelStateMock({
+          modelId,
+          selectedGroupId,
+        }),
+        downloadPlan: null,
+      })
+    )
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()
-    nmtModelStateMock.mockResolvedValue(createDownloadedLocalAssetState())
     sessionStorage.clear()
     window.history.replaceState(null, '', '/')
   })
@@ -141,7 +178,9 @@ describe('MarkdownViewer translation plugin', () => {
     const button = await screen.findByRole('button', { name: 'Translation unavailable' })
     await waitFor(() => expect(button).toBeDisabled())
 
-    expect(button.getAttribute('title')).toContain('Chrome Translator API is not exposed.')
+    expect(button).not.toHaveAttribute('title')
+    fireEvent.mouseEnter(button.parentElement!)
+    expect(await screen.findByText('Chrome Translator API is not exposed.')).toBeTruthy()
     expect(translateMarkdownDocumentProgressivelyMock).not.toHaveBeenCalled()
 
     fireEvent.click(button)
@@ -224,8 +263,104 @@ describe('MarkdownViewer translation plugin', () => {
 
     const button = await screen.findByRole('button', { name: 'Translation unavailable' })
     expect(button).toBeDisabled()
-    expect(button.getAttribute('title')).toContain('not installed locally')
+    expect(button).not.toHaveAttribute('title')
+    fireEvent.mouseEnter(button.parentElement!)
+    expect(
+      await screen.findByText('Selected local model files are not installed locally.')
+    ).toBeTruthy()
     expect(scanBrowserTranslationPairsMock).not.toHaveBeenCalled()
+  })
+
+  it('disables page translation when the selected local model direction conflicts with the target language', async () => {
+    render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'de',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q8' },
+            openai: {},
+          },
+        }}
+      />
+    )
+
+    const button = await screen.findByRole('button', { name: 'Translation unavailable' })
+    expect(button).toBeDisabled()
+    fireEvent.mouseEnter(button.parentElement!)
+    expect(
+      await screen.findByText(
+        'Selected local model supports en -> zh, but document translation is configured for target de.'
+      )
+    ).toBeTruthy()
+
+    fireEvent.click(button)
+
+    expect(nmtModelPanelStateMock).not.toHaveBeenCalled()
+    expect(translateMarkdownDocumentProgressivelyMock).not.toHaveBeenCalled()
+    expect(scanBrowserTranslationPairsMock).not.toHaveBeenCalled()
+  })
+
+  it('recovers from an unavailable browser engine after switching to a ready local model', async () => {
+    getBrowserSupportTableStateMock.mockReturnValueOnce(null)
+    scanBrowserTranslationPairsMock.mockResolvedValueOnce({
+      state: 'missing',
+      message: 'Chrome Translator API is not exposed.',
+      table: null,
+    })
+
+    const { rerender } = render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'browser',
+          engines: {
+            local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q8' },
+            openai: {},
+          },
+        }}
+      />
+    )
+
+    const unavailableButton = await screen.findByRole('button', { name: 'Translation unavailable' })
+    expect(unavailableButton).toBeDisabled()
+
+    fireEvent.click(unavailableButton)
+
+    rerender(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q8' },
+            openai: {},
+          },
+        }}
+      />
+    )
+
+    await waitFor(() =>
+      expect(nmtModelStateMock).toHaveBeenCalledWith({
+        modelId: 'Xenova/opus-mt-en-zh',
+        selectedGroupId: 'q8',
+      })
+    )
+    const readyButton = await screen.findByRole('button', { name: 'Translate' })
+    expect(readyButton).not.toBeDisabled()
+    expect(readyButton).toHaveAttribute('data-translation-action-state', 'ready')
   })
 
   it('projects direct translation as the final render stage and uses translated ToC labels', async () => {
@@ -784,6 +919,95 @@ The system SHALL detect static rendering mode.
     await waitFor(() => expect(screen.getByRole('button', { name: 'Show source' })).toBeTruthy())
   })
 
+  it('surfaces document translation failures when every translated segment fails', async () => {
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args, onPatch) => {
+      const failedSegment = {
+        id: 'md-2',
+        sourceStartOffset: 0,
+        sourceEndOffset: 7,
+        sourceKind: 'heading',
+        source: 'Hello',
+        translatorInput: 'Hello',
+        kind: 'heading',
+        sourceLanguage: 'en',
+        targetLanguage: args.targetLanguage,
+        status: 'error',
+        error: 'fetch failed',
+      }
+      onPatch({ segmentIndex: 0, segment: failedSegment })
+      return {
+        displayMode: args.displayMode,
+        sourceLanguage: 'en',
+        targetLanguage: args.targetLanguage,
+        segments: [failedSegment],
+      }
+    })
+
+    render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+
+    const retryButton = await screen.findByRole('button', { name: 'Retry translation' })
+    expect(retryButton).not.toBeDisabled()
+    expect(retryButton).not.toHaveAttribute('title')
+    fireEvent.focus(retryButton)
+    expect(await screen.findByText('fetch failed Click to retry.')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Hello' })).toBeTruthy()
+
+    mockProgressiveResult('direct', [
+      {
+        id: 'md-2',
+        sourceStartOffset: 0,
+        sourceEndOffset: 7,
+        sourceKind: 'heading',
+        source: 'Hello',
+        translatorInput: 'Hello',
+        target: '你好',
+        kind: 'heading',
+      },
+    ])
+
+    fireEvent.click(retryButton)
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: '你好' })).toBeTruthy())
+    expect(translateMarkdownDocumentProgressivelyMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the source document stable when a browser translation result has no segments', async () => {
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args) => ({
+      displayMode: args.displayMode,
+      sourceLanguage: 'en',
+      targetLanguage: args.targetLanguage,
+    }))
+
+    render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Show source' })).toBeTruthy())
+    expect(screen.getByRole('heading', { name: 'Hello' })).toBeTruthy()
+  })
+
   it('turns off session activation when cancelling an in-flight translation', async () => {
     translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args, onPatch) => {
       onPatch({
@@ -831,6 +1055,292 @@ The system SHALL detect static rendering mode.
     expect(sessionStorage.getItem(DOCUMENT_TRANSLATION_SESSION_STORAGE_KEY)).toBe('source')
     expect(translateMarkdownDocumentProgressivelyMock).toHaveBeenCalledTimes(1)
   })
+
+  it('aborts the page-owned translation task when the viewer unmounts', async () => {
+    let capturedSignal: AbortSignal | undefined
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args) => {
+      capturedSignal = args.signal
+      await new Promise<void>(() => {})
+      throw new Error('unreachable')
+    })
+
+    const view = render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+    await waitFor(() => expect(capturedSignal).toBeInstanceOf(AbortSignal))
+
+    view.unmount()
+
+    expect(capturedSignal?.aborted).toBe(true)
+  })
+
+  it('rejects stale late patches after the markdown generation changes', async () => {
+    let emitStalePatch: (() => void) | undefined
+    let releaseStaleResult: (() => void) | undefined
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args, onPatch) => {
+      emitStalePatch = () =>
+        onPatch({
+          segmentIndex: 0,
+          segment: {
+            id: 'old-heading',
+            sourceStartOffset: 0,
+            sourceEndOffset: 7,
+            sourceKind: 'heading',
+            source: 'Hello',
+            translatorInput: 'Hello',
+            target: '旧翻译',
+            kind: 'heading',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        })
+      await new Promise<void>((resolve) => {
+        releaseStaleResult = resolve
+      })
+      return {
+        displayMode: args.displayMode,
+        sourceLanguage: 'en',
+        targetLanguage: args.targetLanguage,
+        segments: [
+          {
+            id: 'old-heading',
+            sourceStartOffset: 0,
+            sourceEndOffset: 7,
+            sourceKind: 'heading',
+            source: 'Hello',
+            translatorInput: 'Hello',
+            target: '旧最终结果',
+            kind: 'heading',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        ],
+      }
+    })
+
+    const { rerender } = render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+    await waitFor(() => expect(emitStalePatch).toBeTypeOf('function'))
+
+    rerender(
+      <MarkdownViewer
+        markdown={'# Changed'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    act(() => {
+      emitStalePatch?.()
+      releaseStaleResult?.()
+    })
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Changed' })).toBeTruthy())
+    expect(screen.queryByText('旧翻译')).toBeNull()
+    expect(screen.queryByText('旧最终结果')).toBeNull()
+  })
+
+  it('keeps an in-flight batch translation bound to the settings snapshot used at start', async () => {
+    let releaseTranslation: (() => void) | undefined
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args, onPatch) => {
+      await new Promise<void>((resolve) => {
+        releaseTranslation = resolve
+      })
+      onPatch({
+        segmentIndex: 0,
+        segment: {
+          id: 'md-2',
+          sourceStartOffset: 0,
+          sourceEndOffset: 7,
+          sourceKind: 'heading',
+          source: 'Hello',
+          translatorInput: 'Hello',
+          target: '你好',
+          kind: 'heading',
+          sourceLanguage: 'en',
+          targetLanguage: args.targetLanguage,
+          status: 'translated',
+        },
+      })
+      return {
+        displayMode: args.displayMode,
+        sourceLanguage: 'en',
+        targetLanguage: args.targetLanguage,
+        segments: [
+          {
+            id: 'md-2',
+            sourceStartOffset: 0,
+            sourceEndOffset: 7,
+            sourceKind: 'heading',
+            source: 'Hello',
+            translatorInput: 'Hello',
+            target: '你好',
+            kind: 'heading',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        ],
+      }
+    })
+
+    const baseProps = {
+      markdown: '# Hello',
+      translationConfig: {
+        enabled: true,
+        targetLanguage: 'zh',
+        displayMode: 'direct' as const,
+        cacheEnabled: false,
+        engineId: 'local' as const,
+        engines: {
+          local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q4' },
+          openai: {},
+        },
+      },
+    }
+    const { rerender } = render(<MarkdownViewer {...baseProps} />)
+
+    await screen.findByRole('button', { name: 'Translate' })
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+    await waitFor(() => expect(translateMarkdownDocumentProgressivelyMock).toHaveBeenCalled())
+
+    const firstCallArgs = translateMarkdownDocumentProgressivelyMock.mock.calls[0]?.[0]
+    expect(firstCallArgs?.engine.cacheIdentity).toMatchObject({
+      engineId: 'local',
+      model: 'Xenova/opus-mt-en-zh',
+      selectedGroupId: 'q4',
+    })
+
+    mockProgressiveResult('direct', [
+      {
+        id: 'md-2',
+        sourceStartOffset: 0,
+        sourceEndOffset: 7,
+        sourceKind: 'heading',
+        source: 'Hello',
+        translatorInput: 'Hello',
+        target: '你好-q8',
+        kind: 'heading',
+      },
+    ])
+
+    rerender(
+      <MarkdownViewer
+        {...baseProps}
+        translationConfig={{
+          ...baseProps.translationConfig,
+          engines: {
+            local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q8' },
+            openai: {},
+          },
+        }}
+      />
+    )
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: '你好-q8' })).toBeTruthy())
+    const secondCallArgs = translateMarkdownDocumentProgressivelyMock.mock.calls[1]?.[0]
+    expect(secondCallArgs?.engine.cacheIdentity).toMatchObject({
+      engineId: 'local',
+      model: 'Xenova/opus-mt-en-zh',
+      selectedGroupId: 'q8',
+    })
+
+    act(() => {
+      releaseTranslation?.()
+    })
+
+    await waitFor(() => expect(screen.queryByText('你好')).toBeNull())
+    expect(screen.getByRole('heading', { name: '你好-q8' })).toBeTruthy()
+  })
+
+  it('keeps translation cache plumbing available after leaving and re-entering a page', async () => {
+    mockProgressiveResult('direct', [
+      {
+        id: 'md-2',
+        sourceStartOffset: 0,
+        sourceEndOffset: 7,
+        sourceKind: 'heading',
+        source: 'Hello',
+        translatorInput: 'Hello',
+        target: '你好',
+        kind: 'heading',
+      },
+    ])
+
+    const firstView = render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: true,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+    await waitFor(() => expect(screen.getByRole('heading', { name: '你好' })).toBeTruthy())
+    expect(translateMarkdownDocumentProgressivelyMock.mock.calls[0]?.[0].cache).toBeTruthy()
+
+    firstView.unmount()
+
+    mockProgressiveResult('direct', [
+      {
+        id: 'md-2',
+        sourceStartOffset: 0,
+        sourceEndOffset: 7,
+        sourceKind: 'heading',
+        source: 'Hello',
+        translatorInput: 'Hello',
+        target: '你好',
+        kind: 'heading',
+      },
+    ])
+
+    render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: true,
+        }}
+      />
+    )
+
+    await waitFor(() => expect(translateMarkdownDocumentProgressivelyMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('heading', { name: '你好' })).toBeTruthy())
+    expect(translateMarkdownDocumentProgressivelyMock.mock.calls[1]?.[0].cache).toBeTruthy()
+  })
 })
 
 function mockProgressiveResult(
@@ -857,7 +1367,7 @@ function mockProgressiveResult(
 }
 
 function createDownloadedLocalAssetState(): LocalModelAssetState {
-  return {
+  return createLocalAssetStateForTest({
     modelId: 'Xenova/opus-mt-en-zh',
     status: 'downloaded',
     selected: true,
@@ -898,5 +1408,5 @@ function createDownloadedLocalAssetState(): LocalModelAssetState {
       },
     ],
     updatedAt: 100,
-  }
+  })
 }

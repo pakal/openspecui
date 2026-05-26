@@ -25,7 +25,7 @@ describe('OpenSpecAdapter change files', () => {
 
   afterEach(async () => {
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 

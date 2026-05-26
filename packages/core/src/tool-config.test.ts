@@ -16,7 +16,7 @@ describe('getDetectedProjectTools', () => {
 
   afterEach(async () => {
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 

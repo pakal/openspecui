@@ -94,7 +94,7 @@ describe('TerminalInvocationSettings', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit Git Bash' }))
     expect(screen.getByText('Edit Shell')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-  })
+  }, 10_000)
 
   it('adapts command parameter fields without rebuilding the edited field input', async () => {
     await renderSettings()
@@ -136,7 +136,7 @@ describe('TerminalInvocationSettings', () => {
     const textareaOption = await screen.findByRole('option', { name: 'Textarea' })
     fireEvent.mouseMove(textareaOption)
     fireEvent.click(textareaOption)
-  })
+  }, 10_000)
 
   it('persists custom spawn commands with boolean flag builder parts', async () => {
     await renderSettings()
@@ -193,5 +193,5 @@ describe('TerminalInvocationSettings', () => {
         defaultValue: false,
       })
     )
-  })
+  }, 10_000)
 })

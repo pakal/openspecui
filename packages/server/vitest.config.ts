@@ -6,6 +6,9 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // Server tests stub process-global fetch and run real ports; keep file-level
+    // execution serial so mocks and runtime servers cannot bleed across files.
+    fileParallelism: false,
   },
   resolve: {
     alias: {

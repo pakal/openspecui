@@ -9,5 +9,6 @@ export default defineConfig({
   entry: ['src/index.ts'],
   format: 'esm',
   dts: false,
-  noExternal: bundledPrivateTranslatorPackages,
+  noExternal: [...bundledPrivateTranslatorPackages, 'tsx'],
+  external: ['@huggingface/transformers'],
 })

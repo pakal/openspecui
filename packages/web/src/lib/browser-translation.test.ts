@@ -8,7 +8,13 @@ import {
   translateMarkdownDocument,
   translateMarkdownDocumentProgressively,
   type BrowserTranslationCache,
+  type TranslationEngineExecution,
 } from './browser-translation'
+import {
+  clearTranslationAdaptiveConcurrencyLogs,
+  createTranslationAdaptiveConcurrencyScopeKey,
+  readRecentTranslationAdaptiveConcurrencyLogs,
+} from './translation-adaptive-concurrency-log'
 
 interface MockTranslator {
   translate(input: string): Promise<string>
@@ -61,6 +67,7 @@ function cleanupWindowMocks(): void {
 describe('browser translation adapter', () => {
   afterEach(() => {
     cleanupWindowMocks()
+    clearTranslationAdaptiveConcurrencyLogs()
   })
 
   it('extracts translation segments from markdown facts while skipping code blocks', () => {
@@ -524,6 +531,194 @@ Open https://example.com/docs before editing \`Config\`.
       { segmentIndex: 1, target: 'zh:World' },
     ])
     expect(result.segments.map((segment) => segment.target)).toEqual(['zh:Hello', 'zh:World'])
+  })
+
+  it('batches pending translations per source language and restores out-of-order batch outputs', async () => {
+    const batchTranslate = vi.fn(async function* (inputs: string[]) {
+      yield { index: 1, output: `zh:${inputs[1] ?? ''}` }
+      yield { index: 0, output: `zh:${inputs[0] ?? ''}` }
+    })
+    const create = vi.fn(async () => ({
+      batchTranslate,
+      destroy: vi.fn(),
+    }))
+    setTranslator({
+      async availability() {
+        return 'available'
+      },
+      async create() {
+        return {
+          translate: async (input: string) => input,
+          destroy: vi.fn(),
+        }
+      },
+    })
+    setLanguageDetector(undefined)
+
+    const engine: TranslationEngineExecution = {
+      factory: {
+        create,
+      },
+      cacheIdentity: {
+        engineId: 'browser',
+        translatorContractVersion: TRANSLATOR_CONTRACT_VERSION,
+      },
+    }
+
+    const patches: Array<{ segmentIndex: number; target: string | undefined }> = []
+    const result = await translateMarkdownDocumentProgressively(
+      {
+        markdown: '# Hello\n\nWorld',
+        targetLanguage: 'zh',
+        displayMode: 'direct',
+        signal: new AbortController().signal,
+        engine,
+      },
+      (patch) => patches.push({ segmentIndex: patch.segmentIndex, target: patch.segment.target })
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLanguage: 'en',
+        targetLanguage: 'zh',
+      })
+    )
+    expect(batchTranslate).toHaveBeenCalledWith(['Hello', 'World'], expect.any(Object))
+    expect(patches).toEqual([
+      { segmentIndex: 0, target: 'zh:Hello' },
+      { segmentIndex: 1, target: 'zh:World' },
+    ])
+    expect(result.segments.map((segment) => segment.target)).toEqual(['zh:Hello', 'zh:World'])
+  })
+
+  it('rejects unsupported local directional model groups before creating translators', async () => {
+    const batchTranslate = vi.fn(async function* (inputs: string[]) {
+      for (const [index, input] of inputs.entries()) {
+        yield { index, output: `zh:${input}` }
+      }
+    })
+    const create = vi.fn(async () => ({
+      batchTranslate,
+      destroy: vi.fn(),
+    }))
+    const detect = vi.fn(async (input: string) => {
+      if (input.includes('Hallo') && !input.includes('Hello')) {
+        return [{ detectedLanguage: 'de', confidence: 0.95 }]
+      }
+      return [{ detectedLanguage: 'en', confidence: 0.95 }]
+    })
+    setLanguageDetector({
+      async availability() {
+        return 'available'
+      },
+      async create() {
+        return { detect, destroy: vi.fn() }
+      },
+    })
+
+    const engine: TranslationEngineExecution = {
+      factory: {
+        create,
+      },
+      cacheIdentity: {
+        engineId: 'local',
+        model: 'onnx-community/opus-mt-en-zh',
+        selectedGroupId: 'int8-4dc37a',
+        translatorContractVersion: TRANSLATOR_CONTRACT_VERSION,
+      },
+    }
+
+    const result = await translateMarkdownDocumentProgressively(
+      {
+        markdown: 'Hello world.\n\nHallo welt.',
+        targetLanguage: 'zh',
+        displayMode: 'direct',
+        signal: new AbortController().signal,
+        engine,
+      },
+      () => undefined
+    )
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLanguage: 'en',
+        targetLanguage: 'zh',
+      })
+    )
+    expect(result.segments.map((segment) => segment.status)).toEqual(['translated', 'error'])
+    expect(result.segments[1]?.error).toBe(
+      'Selected local model supports en -> zh, but document segment was detected as de -> zh.'
+    )
+  })
+
+  it('records adaptive concurrency metrics in a global log store', async () => {
+    const batchTranslate = vi.fn(async function* (inputs: string[]) {
+      for (const [index, input] of inputs.entries()) {
+        yield { index, output: `zh:${input}` }
+      }
+    })
+    const create = vi.fn(async () => ({
+      batchTranslate,
+      destroy: vi.fn(),
+    }))
+    setTranslator({
+      async availability() {
+        return 'available'
+      },
+      async create() {
+        return {
+          translate: async (input: string) => input,
+          destroy: vi.fn(),
+        }
+      },
+    })
+    setLanguageDetector(undefined)
+
+    const engine: TranslationEngineExecution = {
+      factory: {
+        create,
+      },
+      cacheIdentity: {
+        engineId: 'browser',
+        engineVersion: 'local-test',
+        model: 'browser-test-model',
+        selectedGroupId: 'q8',
+        translatorContractVersion: TRANSLATOR_CONTRACT_VERSION,
+      },
+    }
+
+    const markdown = Array.from({ length: 24 }, (_, index) => `# Item ${index + 1}`).join('\n\n')
+    await translateMarkdownDocumentProgressively(
+      {
+        markdown,
+        targetLanguage: 'zh',
+        displayMode: 'direct',
+        signal: new AbortController().signal,
+        engine,
+      },
+      () => undefined
+    )
+
+    const scopeKey = createTranslationAdaptiveConcurrencyScopeKey({
+      engineId: 'browser',
+      engineVersion: 'local-test',
+      model: 'browser-test-model',
+      selectedGroupId: 'q8',
+      sourceLanguage: 'en',
+      targetLanguage: 'zh',
+      translatorContractVersion: TRANSLATOR_CONTRACT_VERSION,
+    })
+    const logs = readRecentTranslationAdaptiveConcurrencyLogs({ scopeKey, limit: 10 })
+
+    expect(logs.length).toBeGreaterThan(0)
+    expect(logs.every((entry) => entry.scopeKey === scopeKey)).toBe(true)
+    expect(logs[0]).toMatchObject({
+      engineId: 'browser',
+      sourceLanguage: 'en',
+      targetLanguage: 'zh',
+    })
+    expect(logs[0]?.throughputTokensPerMs).toBeGreaterThan(0)
   })
 
   it('prepares downloadable language support through Translator.create', async () => {

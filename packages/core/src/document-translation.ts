@@ -37,13 +37,16 @@ export type DocumentTranslationConfigInput = z.input<typeof DocumentTranslationC
 export type TranslationEngineProjectSettings = z.infer<
   typeof TranslationEngineProjectSettingsSchema
 >
+export type TranslationEngineProjectSettingsUpdate = {
+  local?: Partial<Omit<TranslationEngineProjectSettings['local'], 'selectedGroupId'>> & {
+    selectedGroupId?: TranslationEngineProjectSettings['local']['selectedGroupId'] | null
+  }
+  openai?: Partial<TranslationEngineProjectSettings['openai']>
+}
 export type DocumentTranslationConfigUpdate = Partial<
   Omit<DocumentTranslationConfig, 'engines'>
 > & {
-  engines?: {
-    local?: Partial<TranslationEngineProjectSettings['local']>
-    openai?: Partial<TranslationEngineProjectSettings['openai']>
-  }
+  engines?: TranslationEngineProjectSettingsUpdate
 }
 
 export const DEFAULT_TRANSLATION_CACHE_ENTRY_LIMIT = 10000

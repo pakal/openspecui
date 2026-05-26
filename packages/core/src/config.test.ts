@@ -28,7 +28,7 @@ describe('ConfigManager', () => {
 
   afterEach(async () => {
     clearCache()
-    closeAllWatchers()
+    await closeAllWatchers()
     await cleanupTempDir(tempDir)
   })
 
@@ -407,6 +407,34 @@ describe('ConfigManager', () => {
       })
       await expect(readFile(join(tempDir, 'openspec', '.openspecui.json'), 'utf-8')).resolves.toBe(
         '{\n  "translation": {\n    "engines": {\n      "local": {\n        "model": "Xenova/custom-nmt"\n      },\n      "openai": {\n        "model": "gpt-4.1-mini"\n      }\n    }\n  }\n}'
+      )
+    })
+
+    it('should clear per-engine translation fields when a patch sets them to null', async () => {
+      await configManager.writeConfig({
+        translation: {
+          engines: {
+            local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: 'q8' },
+          },
+        },
+      })
+      clearCache()
+
+      await configManager.writeConfig({
+        translation: {
+          engines: {
+            local: { selectedGroupId: null },
+          },
+        },
+      })
+      clearCache()
+
+      const config = await configManager.readConfig()
+      expect(config.translation.engines.local).toEqual({
+        model: 'onnx-community/opus-mt-en-zh',
+      })
+      await expect(readFile(join(tempDir, 'openspec', '.openspecui.json'), 'utf-8')).resolves.toBe(
+        '{\n  "translation": {\n    "engines": {\n      "local": {\n        "model": "onnx-community/opus-mt-en-zh"\n      }\n    }\n  }\n}'
       )
     })
 
