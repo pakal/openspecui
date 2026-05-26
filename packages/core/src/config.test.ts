@@ -410,6 +410,34 @@ describe('ConfigManager', () => {
       )
     })
 
+    it('should clear per-engine translation fields when a patch sets them to null', async () => {
+      await configManager.writeConfig({
+        translation: {
+          engines: {
+            local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: 'q8' },
+          },
+        },
+      })
+      clearCache()
+
+      await configManager.writeConfig({
+        translation: {
+          engines: {
+            local: { selectedGroupId: null },
+          },
+        },
+      })
+      clearCache()
+
+      const config = await configManager.readConfig()
+      expect(config.translation.engines.local).toEqual({
+        model: 'onnx-community/opus-mt-en-zh',
+      })
+      await expect(readFile(join(tempDir, 'openspec', '.openspecui.json'), 'utf-8')).resolves.toBe(
+        '{\n  "translation": {\n    "engines": {\n      "local": {\n        "model": "onnx-community/opus-mt-en-zh"\n      }\n    }\n  }\n}'
+      )
+    })
+
     it('should create file if not exists', async () => {
       await configManager.writeConfig({ cli: { command: 'new' } })
 

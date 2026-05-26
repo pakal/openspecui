@@ -591,6 +591,67 @@ Open https://example.com/docs before editing \`Config\`.
     expect(result.segments.map((segment) => segment.target)).toEqual(['zh:Hello', 'zh:World'])
   })
 
+  it('rejects unsupported local directional model groups before creating translators', async () => {
+    const batchTranslate = vi.fn(async function* (inputs: string[]) {
+      for (const [index, input] of inputs.entries()) {
+        yield { index, output: `zh:${input}` }
+      }
+    })
+    const create = vi.fn(async () => ({
+      batchTranslate,
+      destroy: vi.fn(),
+    }))
+    const detect = vi.fn(async (input: string) => {
+      if (input.includes('Hallo') && !input.includes('Hello')) {
+        return [{ detectedLanguage: 'de', confidence: 0.95 }]
+      }
+      return [{ detectedLanguage: 'en', confidence: 0.95 }]
+    })
+    setLanguageDetector({
+      async availability() {
+        return 'available'
+      },
+      async create() {
+        return { detect, destroy: vi.fn() }
+      },
+    })
+
+    const engine: TranslationEngineExecution = {
+      factory: {
+        create,
+      },
+      cacheIdentity: {
+        engineId: 'local',
+        model: 'onnx-community/opus-mt-en-zh',
+        selectedGroupId: 'int8-4dc37a',
+        translatorContractVersion: TRANSLATOR_CONTRACT_VERSION,
+      },
+    }
+
+    const result = await translateMarkdownDocumentProgressively(
+      {
+        markdown: 'Hello world.\n\nHallo welt.',
+        targetLanguage: 'zh',
+        displayMode: 'direct',
+        signal: new AbortController().signal,
+        engine,
+      },
+      () => undefined
+    )
+
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceLanguage: 'en',
+        targetLanguage: 'zh',
+      })
+    )
+    expect(result.segments.map((segment) => segment.status)).toEqual(['translated', 'error'])
+    expect(result.segments[1]?.error).toBe(
+      'Selected local model supports en -> zh, but document segment was detected as de -> zh.'
+    )
+  })
+
   it('records adaptive concurrency metrics in a global log store', async () => {
     const batchTranslate = vi.fn(async function* (inputs: string[]) {
       for (const [index, input] of inputs.entries()) {

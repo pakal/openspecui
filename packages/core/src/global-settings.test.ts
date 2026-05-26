@@ -169,4 +169,32 @@ describe('GlobalSettingsManager', () => {
 
     await expect(settingsManager.readSettings()).resolves.toEqual(DEFAULT_GLOBAL_SETTINGS)
   })
+
+  it('clears local selected profile settings when a patch sets them to null', async () => {
+    await settingsManager.writeSettings({
+      translationEngines: {
+        local: {
+          model: 'onnx-community/opus-mt-en-zh',
+          selectedGroupId: 'q8',
+        },
+      },
+    })
+    clearCache()
+
+    await settingsManager.writeSettings({
+      translationEngines: {
+        local: {
+          selectedGroupId: null,
+        },
+      },
+    })
+    clearCache()
+
+    const settings = await settingsManager.readSettings()
+    expect(settings.translationEngines.local.model).toBe('onnx-community/opus-mt-en-zh')
+    expect(settings.translationEngines.local.selectedGroupId).toBeUndefined()
+    await expect(readFile(settingsPath, 'utf-8')).resolves.toBe(
+      '{\n  "translationEngines": {\n    "local": {\n      "model": "onnx-community/opus-mt-en-zh"\n    }\n  }\n}'
+    )
+  })
 })

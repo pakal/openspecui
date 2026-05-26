@@ -9,6 +9,7 @@ import {
 } from '@/lib/browser-translation'
 import { trpcClient } from '@/lib/trpc'
 import type { DocumentTranslationConfig } from '@openspecui/core/document-translation'
+import { checkLocalDirectionalModelLanguagePair } from '@openspecui/core/translation-language-pair'
 import {
   TRANSLATOR_CONTRACT_VERSION,
   type TranslationEngineId,
@@ -56,6 +57,21 @@ export async function resolveTranslateServiceState(input: {
           localModel: model,
           localSelectedGroupId: config.engines.local.selectedGroupId,
         }),
+      })
+    }
+    const directionCheck = checkLocalDirectionalModelLanguagePair({
+      model,
+      targetLanguage: config.targetLanguage,
+    })
+    if (!directionCheck.supported) {
+      return emitTranslateServiceState(input.onUpdate, {
+        status: {
+          state: 'unavailable',
+          engineId: 'local',
+          message:
+            directionCheck.message ??
+            'Selected local model does not support the configured target language.',
+        },
       })
     }
 
@@ -281,6 +297,19 @@ export async function runSingleTranslation(input: {
       return await readSingleBatchOutput(translator.batchTranslate([input.text]))
     } finally {
       translator.destroy?.()
+    }
+  }
+  if (input.engineId === 'local') {
+    const directionCheck = checkLocalDirectionalModelLanguagePair({
+      model: input.model,
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+    })
+    if (!directionCheck.supported) {
+      throw new Error(
+        directionCheck.message ??
+          'Selected local model does not support the requested translation direction.'
+      )
     }
   }
 

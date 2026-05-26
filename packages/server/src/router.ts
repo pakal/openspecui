@@ -221,7 +221,11 @@ export const globalSettingsRouter = router({
         translationEngines: z
           .object({
             openai: TranslationOpenAISettingsSchema.partial().optional(),
-            local: TranslationLocalSettingsSchema.partial().optional(),
+            local: TranslationLocalSettingsSchema.partial()
+              .extend({
+                selectedGroupId: z.string().min(1).nullable().optional(),
+              })
+              .optional(),
           })
           .optional(),
       })
@@ -1172,7 +1176,7 @@ export const configRouter = router({
                 local: z
                   .object({
                     model: z.string().min(1).optional(),
-                    selectedGroupId: z.string().min(1).optional(),
+                    selectedGroupId: z.string().min(1).nullable().optional(),
                   })
                   .optional(),
                 openai: z.object({ model: z.string().min(1).optional() }).optional(),

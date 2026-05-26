@@ -20,6 +20,7 @@ import {
   type MarkdownFactKind,
 } from '@openspecui/core/markdown-facts'
 import { getMarkdownFactSpan } from '@openspecui/core/markdown-reading'
+import { checkLocalDirectionalModelLanguagePair } from '@openspecui/core/translation-language-pair'
 import {
   DEFAULT_TRANSLATION_ENGINE_ID,
   TRANSLATOR_CONTRACT_VERSION,
@@ -664,6 +665,29 @@ async function translatePendingJobsBySourceLanguage(input: {
   translatedSegments: TranslationSegment[]
   onPatch: (patch: DocumentTranslationProgressPatch) => void
 }): Promise<void> {
+  const markJobsError = (jobs: readonly PendingTranslationJob[], message: string): void => {
+    for (const job of jobs) {
+      const failedSegment = {
+        ...job.segment,
+        sourceLanguage: job.sourceLanguage,
+        targetLanguage: input.targetLanguage,
+        status: 'error' as const,
+        error: message,
+      }
+      input.translatedSegments[job.segmentIndex] = failedSegment
+      input.onPatch({ segmentIndex: job.segmentIndex, segment: failedSegment })
+    }
+  }
+  const unsupportedLanguagePairMessage = getUnsupportedEngineLanguagePairMessage({
+    engine: input.engine,
+    sourceLanguage: input.sourceLanguage,
+    targetLanguage: input.targetLanguage,
+  })
+  if (unsupportedLanguagePairMessage) {
+    markJobsError(input.jobs, unsupportedLanguagePairMessage)
+    return
+  }
+
   const batches = packTranslationJobs(input.jobs)
   if (batches.length === 0) return
 
@@ -743,18 +767,7 @@ async function translatePendingJobsBySourceLanguage(input: {
   }
 
   const markBatchError = (batch: PackedTranslationBatch, error: unknown): void => {
-    const message = getErrorMessage(error)
-    for (const job of batch.jobs) {
-      const failedSegment = {
-        ...job.segment,
-        sourceLanguage: job.sourceLanguage,
-        targetLanguage: input.targetLanguage,
-        status: 'error' as const,
-        error: message,
-      }
-      input.translatedSegments[job.segmentIndex] = failedSegment
-      input.onPatch({ segmentIndex: job.segmentIndex, segment: failedSegment })
-    }
+    markJobsError(batch.jobs, getErrorMessage(error))
   }
 
   const startWorker = () => {
@@ -827,6 +840,24 @@ async function translatePendingJobsBySourceLanguage(input: {
   while (workerPromises.size > 0) {
     await Promise.race(workerPromises)
   }
+}
+
+function getUnsupportedEngineLanguagePairMessage(input: {
+  engine: TranslationEngineExecution
+  sourceLanguage: string
+  targetLanguage: string
+}): string | null {
+  if (input.engine.cacheIdentity.engineId !== 'local') return null
+  const directionCheck = checkLocalDirectionalModelLanguagePair({
+    model: input.engine.cacheIdentity.model,
+    sourceLanguage: input.sourceLanguage,
+    targetLanguage: input.targetLanguage,
+  })
+  if (directionCheck.supported) return null
+  return (
+    directionCheck.message ??
+    'Selected local model does not support the detected translation direction.'
+  )
 }
 
 function summarizeTranslationLogThroughput(

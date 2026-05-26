@@ -285,6 +285,26 @@ describe('TranslationEngineService', () => {
     )
   })
 
+  it('rejects local batch translation when a directional model target conflicts', async () => {
+    const loadFactory = vi.spyOn(service as TestableTranslationEngineService, 'loadFactory')
+
+    await expect(
+      collectBatchEvents(
+        service.batchTranslate({
+          engineId: 'local',
+          sourceLanguage: 'en',
+          targetLanguage: 'de',
+          model: 'onnx-community/opus-mt-en-zh',
+          selectedGroupId: 'int8-4dc37a',
+          inputs: ['Hello'],
+        })
+      )
+    ).rejects.toThrow(
+      'Selected local model supports en -> zh, but document translation is configured for target de.'
+    )
+    expect(loadFactory).not.toHaveBeenCalled()
+  })
+
   it('normalizes base local group ids to versioned profile groups during batch translation', async () => {
     const testableService = service as TestableTranslationEngineService
     const create = vi.fn(async () => ({

@@ -6,6 +6,10 @@ import {
   TranslationCacheSettingsSchema,
   type TranslationCacheSettings,
 } from './document-translation.js'
+import {
+  sanitizePersistedSettings,
+  type PersistedSanitizeRule,
+} from './persisted-settings-sanitize.js'
 import { reactiveReadFile, updateReactiveFileCache } from './reactive-fs/index.js'
 import {
   TranslationEngineGlobalSettingsSchema,
@@ -13,7 +17,6 @@ import {
   type TranslationLocalSettings,
   type TranslationOpenAISettings,
 } from './translator.js'
-import { sanitizePersistedSettings, type PersistedSanitizeRule } from './persisted-settings-sanitize.js'
 
 export const OpenSpecUIGlobalSettingsSchema = z.object({
   translationCache: TranslationCacheSettingsSchema.default(
@@ -71,6 +74,22 @@ function pruneNullish(value: unknown): unknown {
 
 function hasOwnEntries(value: object): boolean {
   return Object.keys(value).length > 0
+}
+
+function mergeNullablePatch<TBase extends Record<string, unknown>>(
+  current: TBase,
+  patch: Record<string, unknown> | undefined
+): TBase {
+  const next: Record<string, unknown> = { ...current }
+  if (!patch) return next as TBase
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete next[key]
+    } else if (value !== undefined) {
+      next[key] = value
+    }
+  }
+  return next as TBase
 }
 
 export function toPersistedGlobalSettings(
@@ -190,14 +209,14 @@ export class GlobalSettingsManager {
       },
       translationEngines: {
         ...current.translationEngines,
-        openai: {
-          ...current.translationEngines.openai,
-          ...update.translationEngines?.openai,
-        },
-        local: {
-          ...current.translationEngines.local,
-          ...update.translationEngines?.local,
-        },
+        openai: mergeNullablePatch(
+          current.translationEngines.openai,
+          update.translationEngines?.openai
+        ),
+        local: mergeNullablePatch(
+          current.translationEngines.local,
+          update.translationEngines?.local
+        ),
       },
     })
     const persisted = toPersistedGlobalSettings(merged)

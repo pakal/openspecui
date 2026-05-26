@@ -211,9 +211,7 @@ export const LocalModelProfileManifestGroupSchema = z.object({
   files: z.array(LocalModelProfileManifestFileSchema),
 })
 
-export type LocalModelProfileManifestGroup = z.infer<
-  typeof LocalModelProfileManifestGroupSchema
->
+export type LocalModelProfileManifestGroup = z.infer<typeof LocalModelProfileManifestGroupSchema>
 
 export const LocalModelProfileManifestSchema = z.object({
   modelId: z.string().min(1),
@@ -241,9 +239,7 @@ export const LocalModelLifecycleFileStateSchema = z.object({
   error: z.string().optional(),
 })
 
-export type LocalModelLifecycleFileState = z.infer<
-  typeof LocalModelLifecycleFileStateSchema
->
+export type LocalModelLifecycleFileState = z.infer<typeof LocalModelLifecycleFileStateSchema>
 
 export const LocalModelLifecycleGroupStateSchema = z.object({
   groupId: z.string().min(1),
@@ -260,9 +256,7 @@ export const LocalModelLifecycleGroupStateSchema = z.object({
   files: z.array(LocalModelLifecycleFileStateSchema).default([]),
 })
 
-export type LocalModelLifecycleGroupState = z.infer<
-  typeof LocalModelLifecycleGroupStateSchema
->
+export type LocalModelLifecycleGroupState = z.infer<typeof LocalModelLifecycleGroupStateSchema>
 
 export const LocalModelProfileLoadStateSchema = z.object({
   status: LocalModelProfileStatusSchema.default('idle'),
@@ -464,7 +458,9 @@ export type TranslationEngineGlobalSettings = z.infer<typeof TranslationEngineGl
 
 export type TranslationEngineGlobalSettingsUpdate = {
   openai?: Partial<TranslationOpenAISettings>
-  local?: Partial<TranslationLocalSettings>
+  local?: Partial<Omit<TranslationLocalSettings, 'selectedGroupId'>> & {
+    selectedGroupId?: TranslationLocalSettings['selectedGroupId'] | null
+  }
 }
 
 export const BatchTranslateInputSchema = z.object({

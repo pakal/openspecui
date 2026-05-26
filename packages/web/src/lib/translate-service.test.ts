@@ -1,5 +1,5 @@
 import { LocalModelAssetStateSchema, type LocalModelAssetState } from '@openspecui/core/translator'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolveTranslateServiceState } from './translate-service'
 
 const panelStateQueryMock = vi.hoisted(() => vi.fn())
@@ -37,6 +37,38 @@ vi.mock('@/lib/browser-translation', async (importOriginal) => {
 })
 
 describe('translate service', () => {
+  beforeEach(() => {
+    panelStateQueryMock.mockReset()
+  })
+
+  it('rejects a local directional model when the document target conflicts', async () => {
+    const state = await resolveTranslateServiceState({
+      config: {
+        enabled: true,
+        targetLanguage: 'de',
+        displayMode: 'direct',
+        cacheEnabled: false,
+        engineId: 'local',
+        engines: {
+          local: {
+            model: 'onnx-community/opus-mt-en-zh',
+            selectedGroupId: 'int8-4dc37a',
+          },
+          openai: {},
+        },
+      },
+      hasSource: true,
+    })
+
+    expect(panelStateQueryMock).not.toHaveBeenCalled()
+    expect(state.status).toEqual({
+      state: 'unavailable',
+      engineId: 'local',
+      message:
+        'Selected local model supports en -> zh, but document translation is configured for target de.',
+    })
+  })
+
   it('owns local model availability checks and accepts base selected group ids', async () => {
     panelStateQueryMock.mockResolvedValueOnce({
       modelId: 'Xenova/opus-mt-en-zh',

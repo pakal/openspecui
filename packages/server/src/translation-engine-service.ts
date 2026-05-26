@@ -1,6 +1,7 @@
 import {
   LocalModelAssetStateSchema,
   TRANSLATION_ENGINE_MANIFESTS,
+  checkLocalDirectionalModelLanguagePair,
   type BatchTranslateEvent,
   type BatchTranslateInput,
   type ConfigManager,
@@ -128,6 +129,19 @@ export class TranslationEngineService {
           }
           const settingsSnapshot = await this.globalSettingsManager.readSettings()
           const effectiveModel = resolveBatchTranslateModel(input, settingsSnapshot)
+          if (input.engineId === 'local') {
+            const directionCheck = checkLocalDirectionalModelLanguagePair({
+              model: effectiveModel,
+              sourceLanguage: input.sourceLanguage,
+              targetLanguage: input.targetLanguage,
+            })
+            if (!directionCheck.supported) {
+              throw new Error(
+                directionCheck.message ??
+                  'Selected local model does not support the requested translation direction.'
+              )
+            }
+          }
           const effectiveSelectedGroupId =
             input.engineId === 'local'
               ? (input.selectedGroupId ?? settingsSnapshot.translationEngines.local.selectedGroupId)

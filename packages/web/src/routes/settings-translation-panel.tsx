@@ -14,6 +14,7 @@ import {
   type BrowserTranslationAvailabilityRow,
   type BrowserTranslationSupportTableState,
 } from '@/lib/browser-translation'
+import { resolveDocumentTranslationConfig } from '@/lib/resolve-document-translation-config'
 import { isStaticMode } from '@/lib/static-mode'
 import { runSingleTranslation } from '@/lib/translate-service'
 import { findTranslationLanguage, searchTranslationLanguages } from '@/lib/translation-languages'
@@ -28,6 +29,10 @@ import {
   type DocumentTranslationConfigUpdate,
   type DocumentTranslationDisplayMode,
 } from '@openspecui/core/document-translation'
+import {
+  checkLocalDirectionalModelLanguagePair,
+  inferLocalDirectionalModelLanguagePair,
+} from '@openspecui/core/translation-language-pair'
 import {
   TRANSLATION_ENGINE_IDS,
   getTranslationEngineManifest,
@@ -197,6 +202,24 @@ function getTranslationTestPlaceholder(sourceLanguage: string): string {
   return getTranslationTestSourceSample(sourceLanguage)
 }
 
+function getPreferredSmokeSourceLanguage(input: {
+  engineId: TranslationEngineId | null
+  model: string
+  targetLanguage: string
+}): string {
+  if (input.engineId !== 'local') return DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE
+  const expectedPair = inferLocalDirectionalModelLanguagePair(input.model)
+  if (!expectedPair) return DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE
+  const directionCheck = checkLocalDirectionalModelLanguagePair({
+    model: input.model,
+    sourceLanguage: expectedPair.sourceLanguage,
+    targetLanguage: input.targetLanguage,
+  })
+  return directionCheck.supported
+    ? expectedPair.sourceLanguage
+    : DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE
+}
+
 function replaceQueryCacheData<TData>(
   current: TData | { data?: TData; [key: string]: unknown } | undefined,
   nextData: TData
@@ -291,6 +314,10 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const nmtModelRef = useRef(nmtModel)
   const nmtSelectedGroupIdRef = useRef<string | undefined>(nmtSelectedGroupId)
   const lastLocalPanelStateRef = useRef<LocalPanelStateData | null>(null)
+  const resolvedTranslationConfig = useMemo(
+    () => resolveDocumentTranslationConfig(config?.translation, globalSettings),
+    [config?.translation, globalSettings]
+  )
 
   useEffect(() => {
     queryClientRef.current = queryClient
@@ -322,19 +349,18 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     setAiBaseUrl(globalSettings?.translationEngines?.openai?.baseUrl ?? '')
     setAiToken(globalSettings?.translationEngines?.openai?.token ?? '')
     setAiModel(globalSettings?.translationEngines?.openai?.model ?? 'gpt-4.1-mini')
-    const projectLocalEngine =
-      globalSettings === undefined ? config?.translation?.engines?.local : undefined
+    const resolvedLocalEngine = resolvedTranslationConfig?.engines?.local
     const nextNmtModel =
+      resolvedLocalEngine?.model ??
       globalSettings?.translationEngines?.local?.model ??
-      projectLocalEngine?.model ??
       DEFAULT_LOCAL_MODEL_ID
     setNmtModel(nextNmtModel)
     setNmtModelQuery(nextNmtModel)
     setNmtDebouncedQuery(nextNmtModel)
     setNmtHfEndpoint(globalSettings?.translationEngines?.local?.hfEndpoint ?? '')
     setNmtSelectedGroupId(
-      globalSettings?.translationEngines?.local?.selectedGroupId ??
-        projectLocalEngine?.selectedGroupId
+      resolvedLocalEngine?.selectedGroupId ??
+        globalSettings?.translationEngines?.local?.selectedGroupId
     )
   }, [
     config?.translation?.engines?.local?.model,
@@ -346,6 +372,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     globalSettings?.translationEngines?.local?.hfEndpoint,
     globalSettings?.translationEngines?.local?.model,
     globalSettings?.translationEngines?.local?.selectedGroupId,
+    resolvedTranslationConfig?.engines?.local?.model,
+    resolvedTranslationConfig?.engines?.local?.selectedGroupId,
   ])
 
   useEffect(() => {
@@ -529,6 +557,19 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     ? (translationEngineId ?? config?.translation?.engineId ?? 'browser')
     : null
   const persistedTranslationEngineId = config ? (config.translation?.engineId ?? 'browser') : null
+  const preferredSmokeSourceLanguage = useMemo(
+    () =>
+      getPreferredSmokeSourceLanguage({
+        engineId: effectiveTranslationEngineId,
+        model: nmtModel,
+        targetLanguage: translationTargetLanguage,
+      }),
+    [effectiveTranslationEngineId, nmtModel, translationTargetLanguage]
+  )
+
+  useEffect(() => {
+    setSmokeSourceLanguage(preferredSmokeSourceLanguage)
+  }, [preferredSmokeSourceLanguage])
 
   const refreshBrowserSupportTable = useCallback(
     async (targetLanguage: string) => {
@@ -633,7 +674,9 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       : Math.round((selectedBrowserRow?.progress ?? 0) * 100)
   const browserCheckLoading = browserSupportTable?.state === 'checking'
   const nmtModelId = nmtModel.trim()
-  const persistedLocalSelectedGroupId = globalSettings?.translationEngines?.local?.selectedGroupId
+  const persistedLocalSelectedGroupId =
+    resolvedTranslationConfig?.engines?.local?.selectedGroupId ??
+    globalSettings?.translationEngines?.local?.selectedGroupId
   const preferredLocalSelectedGroupId = nmtSelectedGroupId ?? persistedLocalSelectedGroupId
   const localPanelStateQuery = useQuery({
     ...trpc.localModels.panelState.queryOptions({
@@ -1211,7 +1254,10 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     onCommit={async (model) => {
                       await trpcClient.localModels.markSelected.mutate({ modelId: model })
                       saveGlobalSettingsMutation.mutate({
-                        translationEngines: { local: { model, selectedGroupId: undefined } },
+                        translationEngines: { local: { model, selectedGroupId: null } },
+                      })
+                      saveTranslationConfigMutation.mutate({
+                        engines: { local: { model, selectedGroupId: null } },
                       })
                       setNmtSelectedGroupId(undefined)
                     }}
@@ -1228,6 +1274,9 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     setNmtSelectedGroupId(groupId)
                     saveGlobalSettingsMutation.mutate({
                       translationEngines: { local: { selectedGroupId: groupId } },
+                    })
+                    saveTranslationConfigMutation.mutate({
+                      engines: { local: { selectedGroupId: groupId } },
                     })
                   }}
                 />

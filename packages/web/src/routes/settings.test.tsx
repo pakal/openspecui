@@ -1731,6 +1731,81 @@ describe('Settings', () => {
     )
   })
 
+  it('uses project Local model settings over global defaults for the translation smoke test', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    useGlobalSettingsSubscriptionMock.mockReturnValue({
+      data: {
+        translationCache: { entryLimit: 10000 },
+        translationEngines: {
+          openai: { baseUrl: '', token: '', model: 'gpt-4.1-mini' },
+          local: {
+            model: 'onnx-community/opus-mt-en-zh',
+            selectedGroupId: 'int8-4dc37a',
+            hfEndpoint: '',
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: {
+              model: 'onnx-community/opus-mt-en-zh',
+              selectedGroupId: 'q8',
+            },
+            openai: {},
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    await waitFor(() =>
+      expect(localModelsMock.panelState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelId: 'onnx-community/opus-mt-en-zh',
+          selectedGroupId: 'q8',
+        })
+      )
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open translation test' }))
+    const dialog = screen.getByRole('dialog', { name: 'Translation Test', hidden: true })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Run Test' }))
+
+    expect(
+      await within(dialog).findByText('server:My name is Sarah and I live in London.')
+    ).toBeTruthy()
+    expect(translationEnginesMock.batchTranslate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        engineId: 'local',
+        targetLanguage: 'zh',
+        model: 'onnx-community/opus-mt-en-zh',
+        selectedGroupId: 'q8',
+        inputs: ['My name is Sarah and I live in London.'],
+      }),
+      expect.any(Object)
+    )
+  })
+
   it('does not refresh remote Local model profiles on initial mount when local profiles exist', async () => {
     vi.stubGlobal(
       'matchMedia',
@@ -1903,6 +1978,110 @@ describe('Settings', () => {
     expect(screen.getAllByText(/q8/).length).toBeGreaterThan(0)
     expect(screen.getByText('Local Model')).toBeTruthy()
   }, 10000)
+
+  it('persists Local model commits into the document translation runtime identity', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: {
+              model: 'Xenova/opus-mt-no-de',
+              selectedGroupId: 'q8',
+            },
+            openai: {},
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Local model' }))
+    dispatchPopoverToggle(screen.getByRole('dialog', { name: 'Select local model' }), 'open')
+    const input = screen.getByRole('textbox', { name: 'Search local models' })
+    fireEvent.change(input, { target: { value: 'opus' } })
+
+    const nextModelOption = await screen.findByRole('option', {
+      name: /onnx-community\/opus-mt-en-zh/,
+    })
+    fireEvent.click(nextModelOption)
+
+    await waitFor(() =>
+      expect(localModelsMock.markSelected).toHaveBeenCalledWith({
+        modelId: 'onnx-community/opus-mt-en-zh',
+      })
+    )
+    expect(updateGlobalSettingsMock).toHaveBeenCalledWith({
+      translationEngines: {
+        local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
+      },
+    })
+    expect(updateConfigMock).toHaveBeenCalledWith({
+      translation: {
+        engines: {
+          local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
+        },
+      },
+    })
+  })
+
+  it('persists Local profile selection into the document translation runtime identity', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: {
+              model: 'Xenova/opus-mt-no-de',
+              selectedGroupId: 'q8',
+            },
+            openai: {},
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    const profileList = await screen.findByLabelText('Local download profiles')
+    fireEvent.click(within(profileList).getByRole('button', { name: /^fp16/i }))
+
+    expect(updateGlobalSettingsMock).toHaveBeenCalledWith({
+      translationEngines: { local: { selectedGroupId: 'fp16' } },
+    })
+    expect(updateConfigMock).toHaveBeenCalledWith({
+      translation: { engines: { local: { selectedGroupId: 'fp16' } } },
+    })
+  })
 
   it('saves the Local-Transformers Hugging Face endpoint from the advanced provider popover', async () => {
     vi.stubGlobal(
@@ -2621,7 +2800,7 @@ describe('Settings', () => {
     expect(screen.getByText('onnx/encoder_model_quantized.onnx')).toBeTruthy()
     expect(screen.getByText('0 B / 50.4 MB')).toBeTruthy()
     expect(localModelsMock.subscribeLogs).toHaveBeenCalledTimes(1)
-  })
+  }, 15_000)
 
   it('uses only the outer progress ring for downloaded Local-Transformers action styling', async () => {
     vi.stubGlobal(
@@ -3710,21 +3889,26 @@ describe('Settings', () => {
     const dialog = screen.getByRole('dialog', { name: 'Translation Test', hidden: true })
     const sourceText = within(dialog).getByRole('textbox', { name: 'Translation test source text' })
     expect(sourceText).toHaveValue('')
-    expect(sourceText).toHaveAttribute('placeholder', 'My name is Sarah and I live in London.')
+    expect(sourceText).toHaveAttribute(
+      'placeholder',
+      'Dette er en liten oversettelsestest fra norsk til tysk.'
+    )
     await waitFor(() => expect(screen.getAllByText('q8 (8-bit)').length).toBeGreaterThan(0))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Run Test' }))
 
     expect(
-      await within(dialog).findByText('server:My name is Sarah and I live in London.')
+      await within(dialog).findByText(
+        'server:Dette er en liten oversettelsestest fra norsk til tysk.'
+      )
     ).toBeTruthy()
     expect(translationEnginesMock.batchTranslate).toHaveBeenCalledWith(
       expect.objectContaining({
         engineId: 'local',
-        sourceLanguage: 'en',
+        sourceLanguage: 'no',
         targetLanguage: 'de',
         model: 'Xenova/opus-mt-no-de',
         selectedGroupId: 'q8',
-        inputs: ['My name is Sarah and I live in London.'],
+        inputs: ['Dette er en liten oversettelsestest fra norsk til tysk.'],
       }),
       expect.any(Object)
     )

@@ -8,7 +8,10 @@ import {
   type DocumentTranslationConfigUpdate,
 } from './document-translation.js'
 import { NotificationSettingsSchema, type NotificationSettings } from './notifications.js'
-import { sanitizePersistedSettings, type PersistedSanitizeRule } from './persisted-settings-sanitize.js'
+import {
+  sanitizePersistedSettings,
+  type PersistedSanitizeRule,
+} from './persisted-settings-sanitize.js'
 import { reactiveReadFile, updateReactiveFileCache } from './reactive-fs/index.js'
 import { DEFAULT_BELL_SOUND_ID, SoundVolumeSchema } from './sounds.js'
 import { runBufferedCommand } from './spawn-safe.js'
@@ -841,6 +844,22 @@ function hasOwnEntries(value: object): boolean {
   return Object.keys(value).length > 0
 }
 
+function mergeNullablePatch<TBase extends Record<string, unknown>>(
+  current: TBase,
+  patch: Record<string, unknown> | undefined
+): TBase {
+  const next: Record<string, unknown> = { ...current }
+  if (!patch) return next as TBase
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete next[key]
+    } else if (value !== undefined) {
+      next[key] = value
+    }
+  }
+  return next as TBase
+}
+
 export function toPersistedConfig(
   config: OpenSpecUIConfig,
   options: {
@@ -976,9 +995,7 @@ export function toPersistedConfig(
   const localEngine: NonNullable<
     NonNullable<PersistedOpenSpecUIConfig['translation']>['engines']
   >['local'] = {}
-  if (
-    config.translation.engines.local.model !== DEFAULT_CONFIG.translation.engines.local.model
-  ) {
+  if (config.translation.engines.local.model !== DEFAULT_CONFIG.translation.engines.local.model) {
     localEngine.model = config.translation.engines.local.model
   }
   if (
@@ -1107,14 +1124,14 @@ export class ConfigManager {
         ...current.translation,
         ...config.translation,
         engines: {
-          local: {
-            ...current.translation.engines.local,
-            ...config.translation?.engines?.local,
-          },
-          openai: {
-            ...current.translation.engines.openai,
-            ...config.translation?.engines?.openai,
-          },
+          local: mergeNullablePatch(
+            current.translation.engines.local,
+            config.translation?.engines?.local
+          ),
+          openai: mergeNullablePatch(
+            current.translation.engines.openai,
+            config.translation?.engines?.openai
+          ),
         },
       },
     }

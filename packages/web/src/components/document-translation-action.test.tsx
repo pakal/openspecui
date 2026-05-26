@@ -271,6 +271,40 @@ describe('MarkdownViewer translation plugin', () => {
     expect(scanBrowserTranslationPairsMock).not.toHaveBeenCalled()
   })
 
+  it('disables page translation when the selected local model direction conflicts with the target language', async () => {
+    render(
+      <MarkdownViewer
+        markdown={'# Hello'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'de',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
+            local: { model: 'Xenova/opus-mt-en-zh', selectedGroupId: 'q8' },
+            openai: {},
+          },
+        }}
+      />
+    )
+
+    const button = await screen.findByRole('button', { name: 'Translation unavailable' })
+    expect(button).toBeDisabled()
+    fireEvent.mouseEnter(button.parentElement!)
+    expect(
+      await screen.findByText(
+        'Selected local model supports en -> zh, but document translation is configured for target de.'
+      )
+    ).toBeTruthy()
+
+    fireEvent.click(button)
+
+    expect(nmtModelPanelStateMock).not.toHaveBeenCalled()
+    expect(translateMarkdownDocumentProgressivelyMock).not.toHaveBeenCalled()
+    expect(scanBrowserTranslationPairsMock).not.toHaveBeenCalled()
+  })
+
   it('recovers from an unavailable browser engine after switching to a ready local model', async () => {
     getBrowserSupportTableStateMock.mockReturnValueOnce(null)
     scanBrowserTranslationPairsMock.mockResolvedValueOnce({

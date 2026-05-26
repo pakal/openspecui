@@ -21,6 +21,10 @@ export default defineConfig(({ isSsrBuild }) => {
     '@openspecui/core': resolve(__dirname, '../core/src'),
     '@openspecui/core/dashboard-display': resolve(__dirname, '../core/src/dashboard-display.ts'),
     '@openspecui/core/hosted-app': resolve(__dirname, '../core/src/hosted-app.ts'),
+    '@openspecui/core/translation-language-pair': resolve(
+      __dirname,
+      '../core/src/translation-language-pair.ts'
+    ),
     '@openspecui/core/notifications': resolve(__dirname, '../core/src/notifications.ts'),
     '@openspecui/core/openspec-compat': resolve(__dirname, '../core/src/openspec-compat.ts'),
     '@openspecui/core/opsx-display-path': resolve(__dirname, '../core/src/opsx-display-path.ts'),
