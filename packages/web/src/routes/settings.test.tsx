@@ -669,9 +669,7 @@ const {
     delete: vi.fn(async () => ({ success: true })),
     refreshArtifacts: vi.fn(),
   }
-  const createReadyLifecycle = (
-    message = 'Runtime is ready.'
-  ): TranslationEngineLifecycleStatus =>
+  const createReadyLifecycle = (message = 'Runtime is ready.'): TranslationEngineLifecycleStatus =>
     createTranslationEngineLifecycleStatus({
       dependency: {
         state: 'installed',
@@ -718,7 +716,10 @@ const {
       translationEnginesMock.getLifecycle({ engineId })
     )
     translationEnginesMock.installStream.mockImplementation(
-      (input: TranslationEngineInstallStreamInput, handlers: TranslationEngineInstallStreamHandlers) => {
+      (
+        input: TranslationEngineInstallStreamInput,
+        handlers: TranslationEngineInstallStreamHandlers
+      ) => {
         const unsubscribe = vi.fn()
         queueMicrotask(() => {
           if (unsubscribe.mock.calls.length > 0) return
@@ -746,9 +747,13 @@ const {
                     },
                   })
                 : createReadyLifecycle()
-          handlers.onData(normalizeLegacyLifecycleEvent({ type: 'status', lifecycle }, input.engineId))
+          handlers.onData(
+            normalizeLegacyLifecycleEvent({ type: 'status', lifecycle }, input.engineId)
+          )
           if (unsubscribe.mock.calls.length > 0) return
-          handlers.onData(normalizeLegacyLifecycleEvent({ type: 'exit', lifecycle }, input.engineId))
+          handlers.onData(
+            normalizeLegacyLifecycleEvent({ type: 'exit', lifecycle }, input.engineId)
+          )
         })
         return { unsubscribe }
       }
@@ -1559,7 +1564,10 @@ vi.mock('@tanstack/react-query', () => ({
     )
     const key = queryKey?.join('.') ?? ''
     if (!reactQueryMockStore.has(queryKey)) {
-      reactQueryMockStore.seedQueryData(queryKey, normalizeTranslationEngineListFixtures(resolveQueryResultForKey(key)))
+      reactQueryMockStore.seedQueryData(
+        queryKey,
+        normalizeTranslationEngineListFixtures(resolveQueryResultForKey(key))
+      )
       if (key.startsWith('localModels.state') && queryKey?.[1]) {
         void localModelsMock
           .state({
@@ -3107,6 +3115,64 @@ describe('Settings', () => {
     )
   })
 
+  it('shows a loading state while CT2 artifacts are still being resolved for the selected model', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const modelId = 'ooeoeo/opus-mt-en-zh-ct2-float16'
+    localCt2ModelsMock.panelState.mockResolvedValue({
+      modelId,
+      selectedGroupId: 'float16',
+      asset: createLocalAssetStateForTest({
+        modelId,
+        status: 'not-downloaded',
+        selected: true,
+        selectedGroupId: 'float16',
+        progress: 0,
+        resumable: false,
+        files: [],
+        profileLoad: {
+          status: 'loading',
+          message: 'Loading CT2 model artifacts.',
+          updatedAt: 101,
+        },
+        updatedAt: 101,
+      }),
+      downloadPlan: null,
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local-ct2',
+          engines: {
+            local: {},
+            localCt2: {
+              model: modelId,
+              selectedGroupId: 'float16',
+            },
+            openai: {},
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    expect(await screen.findByText('Loading CT2 model artifacts.')).toBeTruthy()
+    expect(screen.queryByText('No runtime download plan available.')).toBeNull()
+  })
+
   it('does not refresh remote Local model profiles on initial mount when local profiles exist', async () => {
     vi.stubGlobal(
       'matchMedia',
@@ -3265,16 +3331,18 @@ describe('Settings', () => {
         }
       }
     )
-    localModelsMock.markSelected.mockImplementationOnce(async ({ modelId }: { modelId: string }) => {
-      selectionHydrated = true
-      const asset = createDefaultLocalAssetState(modelId, 'q8')
-      return {
-        modelId,
-        selectedGroupId: 'q8',
-        asset,
-        downloadPlan: createDefaultLocalDownloadPlan(modelId, 'q8'),
+    localModelsMock.markSelected.mockImplementationOnce(
+      async ({ modelId }: { modelId: string }) => {
+        selectionHydrated = true
+        const asset = createDefaultLocalAssetState(modelId, 'q8')
+        return {
+          modelId,
+          selectedGroupId: 'q8',
+          asset,
+          downloadPlan: createDefaultLocalDownloadPlan(modelId, 'q8'),
+        }
       }
-    })
+    )
     useConfigSubscriptionMock.mockReturnValue({
       data: {
         translation: {
@@ -4257,134 +4325,130 @@ describe('Settings', () => {
     expect(deleteButton.className).not.toContain('shadow')
   })
 
-  it(
-    'reconciles Local download completion from panel truth after the server resolves a versioned group id',
-    async () => {
-      vi.stubGlobal(
-        'matchMedia',
-        vi.fn(() => ({
-          matches: false,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-        }))
-      )
-      const modelId = 'onnx-community/opus-mt-en-zh'
-      const initialPlan = createQ4PlanForTest(modelId)
-      let downloadTriggered = false
-      localModelsMock.panelState.mockImplementation(async ({ selectedGroupId }) => {
-        if (!downloadTriggered) {
-          return {
-            modelId,
-            selectedGroupId: selectedGroupId ?? 'q4',
-            asset: createLocalAssetStateForTest({
-              modelId,
-              status: 'not-downloaded',
-              selected: true,
-              selectedGroupId: selectedGroupId ?? 'q4',
-              progress: 0,
-              bytesDownloaded: 0,
-              totalBytes: 125831658,
-              resumable: false,
-              plan: initialPlan,
-              files: createQ4AssetFilesForTest({}),
-              updatedAt: 100,
-            }),
-            downloadPlan: initialPlan,
-          }
-        }
-        const downloadedPlan: TranslationModelDownloadPlan = {
-          ...initialPlan,
-          selectedGroupId: 'q4-abcdef',
-          groups: initialPlan.groups?.map((group) => ({
-            ...group,
-            id: 'q4-abcdef',
-            baseGroupId: 'q4',
-            selected: true,
-            status: 'downloaded',
-          })),
-        }
+  it('reconciles Local download completion from panel truth after the server resolves a versioned group id', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const modelId = 'onnx-community/opus-mt-en-zh'
+    const initialPlan = createQ4PlanForTest(modelId)
+    let downloadTriggered = false
+    localModelsMock.panelState.mockImplementation(async ({ selectedGroupId }) => {
+      if (!downloadTriggered) {
         return {
           modelId,
-          selectedGroupId: 'q4-abcdef',
+          selectedGroupId: selectedGroupId ?? 'q4',
           asset: createLocalAssetStateForTest({
             modelId,
-            status: 'downloaded',
+            status: 'not-downloaded',
             selected: true,
-            selectedGroupId: 'q4-abcdef',
-            progress: 1,
-            bytesDownloaded: 125831658,
+            selectedGroupId: selectedGroupId ?? 'q4',
+            progress: 0,
+            bytesDownloaded: 0,
             totalBytes: 125831658,
             resumable: false,
-            plan: downloadedPlan,
-            files: createQ4AssetFilesForTest({
-              'config.json': 1503,
-              'generation_config.json': 293,
-              'source.spm': 806435,
-              'target.spm': 804600,
-              'onnx/encoder_model_q4.onnx': 31457280,
-              'onnx/decoder_model_merged_q4.onnx': 94371840,
-            }),
-            updatedAt: 200,
+            plan: initialPlan,
+            files: createQ4AssetFilesForTest({}),
+            updatedAt: 100,
           }),
-          downloadPlan: downloadedPlan,
+          downloadPlan: initialPlan,
         }
-      })
-      localModelsMock.download.mockImplementationOnce(async () => {
-        downloadTriggered = true
-        return { sessionId: 'session-1' }
-      })
-      useConfigSubscriptionMock.mockReturnValue({
-        data: {
-          translation: {
-            enabled: false,
-            targetLanguage: 'zh',
-            displayMode: 'direct',
-            cacheEnabled: false,
-            engineId: 'local',
-            engines: {
-              local: {
-                model: modelId,
-                selectedGroupId: 'q4',
-              },
-            },
-          },
-        },
-      })
-      useGlobalSettingsSubscriptionMock.mockReturnValue({
-        data: {
-          translationEngines: {
+      }
+      const downloadedPlan: TranslationModelDownloadPlan = {
+        ...initialPlan,
+        selectedGroupId: 'q4-abcdef',
+        groups: initialPlan.groups?.map((group) => ({
+          ...group,
+          id: 'q4-abcdef',
+          baseGroupId: 'q4',
+          selected: true,
+          status: 'downloaded',
+        })),
+      }
+      return {
+        modelId,
+        selectedGroupId: 'q4-abcdef',
+        asset: createLocalAssetStateForTest({
+          modelId,
+          status: 'downloaded',
+          selected: true,
+          selectedGroupId: 'q4-abcdef',
+          progress: 1,
+          bytesDownloaded: 125831658,
+          totalBytes: 125831658,
+          resumable: false,
+          plan: downloadedPlan,
+          files: createQ4AssetFilesForTest({
+            'config.json': 1503,
+            'generation_config.json': 293,
+            'source.spm': 806435,
+            'target.spm': 804600,
+            'onnx/encoder_model_q4.onnx': 31457280,
+            'onnx/decoder_model_merged_q4.onnx': 94371840,
+          }),
+          updatedAt: 200,
+        }),
+        downloadPlan: downloadedPlan,
+      }
+    })
+    localModelsMock.download.mockImplementationOnce(async () => {
+      downloadTriggered = true
+      return { sessionId: 'session-1' }
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: false,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local',
+          engines: {
             local: {
               model: modelId,
               selectedGroupId: 'q4',
-              hfEndpoint: '',
             },
           },
         },
-      })
-      useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+      },
+    })
+    useGlobalSettingsSubscriptionMock.mockReturnValue({
+      data: {
+        translationEngines: {
+          local: {
+            model: modelId,
+            selectedGroupId: 'q4',
+            hfEndpoint: '',
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
 
-      render(<Settings />)
+    render(<Settings />)
 
-      await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
-      const downloadButton = await screen.findByRole('button', { name: 'Download model' })
-      fireEvent.click(downloadButton)
-      expect(localModelsMock.download).toHaveBeenCalledWith({ modelId, groupId: 'q4' })
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    const downloadButton = await screen.findByRole('button', { name: 'Download model' })
+    fireEvent.click(downloadButton)
+    expect(localModelsMock.download).toHaveBeenCalledWith({ modelId, groupId: 'q4' })
 
-      await waitFor(
-        () =>
-          expect(
-            screen.getByLabelText('Downloaded', { selector: '[data-local-plan-action="downloaded"]' })
-          ).toBeTruthy(),
-        { timeout: 4000 }
-      )
-      expect(screen.getByRole('button', { name: 'Delete model' })).toBeTruthy()
-      expect(localModelsMock.panelState).toHaveBeenLastCalledWith({
-        modelId,
-        selectedGroupId: 'q4',
-      })
-    },
-    10_000
-  )
+    await waitFor(
+      () =>
+        expect(
+          screen.getByLabelText('Downloaded', { selector: '[data-local-plan-action="downloaded"]' })
+        ).toBeTruthy(),
+      { timeout: 4000 }
+    )
+    expect(screen.getByRole('button', { name: 'Delete model' })).toBeTruthy()
+    expect(localModelsMock.panelState).toHaveBeenLastCalledWith({
+      modelId,
+      selectedGroupId: 'q4',
+    })
+  }, 10_000)
 
   it('switches the displayed download file list when a different Local profile chip is selected', async () => {
     vi.stubGlobal(

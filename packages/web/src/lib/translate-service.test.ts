@@ -131,7 +131,7 @@ describe('translate service', () => {
       modelId: 'Xenova/opus-mt-en-zh',
       selectedGroupId: 'q4',
     })
-    expect(updates).toEqual(['checking'])
+    expect(updates).toEqual(['checking', 'checking'])
     expect(state.status).toEqual({
       state: 'ready',
       engineId: 'local',

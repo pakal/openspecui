@@ -134,7 +134,7 @@ export function normalizeRuntimeHostOptionalDependencies(input: {
   packageNames: readonly string[]
 }): void {
   const parsed = readRuntimeHostPackageJson(input.runtimeHost.packageJsonPath)
-  const dependencies = { ...(parsed.dependencies ?? {}) }
+  const dependencies = { ...parsed.dependencies }
   const optionalDependencies = parsed.optionalDependencies ?? {}
   let changed = false
 

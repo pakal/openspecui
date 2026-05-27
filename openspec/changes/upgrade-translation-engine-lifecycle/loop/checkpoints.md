@@ -46,8 +46,8 @@
 
 ## 8. PR and Release Gates
 
-- [ ] 8.1 Changeset included for release-impacting package changes
-- [ ] 8.2 CI-equivalent local checks passed
+- [x] 8.1 Changeset included for release-impacting package changes
+- [x] 8.2 CI-equivalent local checks passed
 - [ ] 8.3 PR checks passed
 
 ## 9. Merge Readiness

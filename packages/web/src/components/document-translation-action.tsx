@@ -155,7 +155,7 @@ function createTranslationProjection(result: ReturnType<typeof useDocumentTransl
   blockAnnotations: MarkdownBlockAnnotation[]
 } {
   if (!result) return { blockAnnotations: [] }
-  const segments = Array.isArray(result.segments) ? result.segments : []
+  const segments = getRenderableTranslationSegments(result)
 
   const segmentByOffset = new Map(
     segments
@@ -221,6 +221,14 @@ function createTranslationProjection(result: ReturnType<typeof useDocumentTransl
         })
       ),
   }
+}
+
+function getRenderableTranslationSegments(
+  result: NonNullable<ReturnType<typeof useDocumentTranslation>['result']>
+): DocumentTranslationSegmentResult[] {
+  return (Array.isArray(result.segments) ? result.segments : []).filter(
+    (segment): segment is DocumentTranslationSegmentResult => segment !== undefined
+  )
 }
 
 function createTranslatedHeadingTransform(

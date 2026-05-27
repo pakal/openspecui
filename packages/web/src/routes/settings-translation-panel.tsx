@@ -37,8 +37,8 @@ import {
   TRANSLATION_ENGINE_IDS,
   createTranslationEngineLifecycleStatus,
   getManagedLocalTranslationEngineManifest,
-  getTranslationEngineManifest,
   getTranslationEngineLifecycleMessage,
+  getTranslationEngineManifest,
   isManagedLocalTranslationEngineId,
   shouldShowTranslationEngineInstallGate,
   type LocalModelAssetState,
@@ -262,9 +262,9 @@ function replaceTranslationEngineLifecycleInQueryData<
   }
 ): TCurrent {
   const updateItems = (items: TItem[] | undefined) =>
-    items?.map((item) => (item.id === input.engineId ? { ...item, lifecycle: input.lifecycle } : item)) as
-      | TItem[]
-      | undefined
+    items?.map((item) =>
+      item.id === input.engineId ? { ...item, lifecycle: input.lifecycle } : item
+    ) as TItem[] | undefined
 
   if (Array.isArray(current)) {
     return updateItems(current) as TCurrent
@@ -463,9 +463,7 @@ function cacheManagedLocalPanelState(input: {
   }
 }
 
-function shouldPollManagedLocalPanelState(
-  panelState: LocalPanelStateData | null
-): boolean {
+function shouldPollManagedLocalPanelState(panelState: LocalPanelStateData | null): boolean {
   const status = panelState?.asset.status
   return status === 'queued' || status === 'downloading' || status === 'deleting'
 }
@@ -1189,8 +1187,10 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       : Math.round(displayedLocalAsset.progress * 100)
   const nmtGroupSelectionDisabled = displayedLocalAsset?.status === 'deleting'
   const nmtResolvedHfEndpoint = nmtHfEndpoint.trim() || 'https://huggingface.co'
+  const localProfileLoading = selectedLocalAsset?.profileLoad?.status === 'loading'
   const localPlanLoading =
-    (localPanelStateQuery.isLoading || localPanelStateQuery.isFetching) && !selectedLocalAsset
+    ((localPanelStateQuery.isLoading || localPanelStateQuery.isFetching) && !selectedLocalAsset) ||
+    localProfileLoading
   useEffect(() => {
     if (!activeManagedLocalEngineId || !nmtModelId || inStaticMode) return
     if (!shouldPollManagedLocalPanelState(localPanelState)) return
@@ -1198,15 +1198,10 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       void localPanelStateQuery.refetch()
     }, 750)
     return () => window.clearTimeout(timer)
-  }, [
-    activeManagedLocalEngineId,
-    inStaticMode,
-    localPanelState,
-    localPanelStateQuery,
-    nmtModelId,
-  ])
+  }, [activeManagedLocalEngineId, inStaticMode, localPanelState, localPanelStateQuery, nmtModelId])
   const shouldShowInstallFlow =
-    effectiveTranslationEngineId !== null && shouldShowTranslationEngineInstallGate(resolvedLifecycle)
+    effectiveTranslationEngineId !== null &&
+    shouldShowTranslationEngineInstallGate(resolvedLifecycle)
   const startBrowserPairPreparation = useCallback(
     async (row: BrowserTranslationAvailabilityRow) => {
       browserPrepareControllerRef.current?.abort()
@@ -1353,15 +1348,15 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   useEffect(() => {
     if (!effectiveTranslationEngineId || effectiveTranslationEngineId === 'browser') return
     setEngineLifecycle((current) => {
-      if (current?.dependency.state === 'installing' && shouldShowTranslationEngineInstallGate(selectedEngineLifecycle)) {
+      if (
+        current?.dependency.state === 'installing' &&
+        shouldShowTranslationEngineInstallGate(selectedEngineLifecycle)
+      ) {
         return current
       }
       return selectedEngineLifecycle
     })
-  }, [
-    effectiveTranslationEngineId,
-    selectedEngineLifecycle,
-  ])
+  }, [effectiveTranslationEngineId, selectedEngineLifecycle])
 
   useEffect(() => {
     if (!engineInstallLogs) return
@@ -2713,7 +2708,11 @@ function LocalDownloadFilesCard({
           downloadedBytes: stateFileByPath.get(file.path)?.downloadedBytes,
         }))
       : (state?.files ?? [])
-  const isResolving = loading && !state
+  const profileLoadMessage =
+    state?.profileLoad?.status === 'loading'
+      ? (state.profileLoad.message ?? 'Loading model files…')
+      : null
+  const isResolving = loading && !plan && displayFiles.length === 0
 
   return (
     <div className="space-y-3">
@@ -2874,7 +2873,7 @@ function LocalDownloadFilesCard({
             {isResolving ? (
               <div className="text-muted-foreground mt-2 flex items-center gap-2 leading-5">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading model files…
+                {profileLoadMessage ?? 'Loading model files…'}
               </div>
             ) : displayFiles.length > 0 ? (
               <ul className="scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[color-mix(in_srgb,currentColor,transparent_78%)] text-muted-foreground mt-2 max-h-48 space-y-1 overflow-y-auto pr-1">

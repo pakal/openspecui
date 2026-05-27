@@ -105,3 +105,39 @@ Focused verification completed:
 - `pnpm --filter @openspecui/web exec vitest run src/routes/settings.test.tsx --project unit`
 - `pnpm --filter openspecui run build`
 - `pnpm pack --pack-destination /tmp/openspecui-walkthrough-pack`
+
+## 2026-05-27 22:42 CST Progress
+
+- User walkthrough exposed two shared managed-local/document-translation regressions after the earlier lifecycle landing:
+  - `local-ct2` could render an empty `Download files` card during initial artifact hydration instead of a loading state.
+  - document translation could still crash on `segment.target` when progressive patches produced sparse `segments` and later updates materialized explicit `undefined` entries.
+- Closed the managed-local loading gap by promoting `asset.profileLoad.status === 'loading'` into the shared local-plan loading law, and by teaching `LocalDownloadFilesCard` to render the profile/artifact loading message when the selected asset has no resolved plan/files yet.
+- Closed the translation crash in two layers:
+  - `use-document-translation` now preserves sparse patch arrays with `slice()` instead of expanding holes into explicit `undefined`.
+  - `document-translation-action` now normalizes translation segments before projecting headings/block annotations, so external result sources cannot crash the renderer with undefined entries.
+- Added focused BDD regressions for both failures:
+  - `packages/web/src/routes/settings.test.tsx` now asserts the `local-ct2` selected model shows a loading state during artifact hydration instead of `No runtime download plan available.`
+  - `packages/web/src/components/document-translation-action.test.tsx` now reproduces out-of-order progressive patches and asserts the viewer keeps rendering until the final translation result lands.
+
+Focused verification completed:
+
+- `pnpm --filter @openspecui/web exec vitest run src/routes/settings.test.tsx --project unit`
+- `pnpm --filter @openspecui/web exec vitest run src/components/document-translation-action.test.tsx --project unit`
+- `pnpm --filter @openspecui/web exec vitest run src/routes/settings.test.tsx src/components/document-translation-action.test.tsx --project unit`
+- `git diff --check`
+
+## 2026-05-28 01:36 CST Progress
+
+- Release close-out surfaced three stale tests whose expectations still reflected pre-lifecycle dependency law instead of the current runtime-host model:
+  - `packages/web/src/lib/translate-service.test.ts` expected only one `checking` update before managed-local readiness, but the lifecycle precheck now emits runtime checking before local asset checking.
+  - `packages/server/src/local-model-subscription-transport.test.ts` overfit the integration path to exactly two encoder fetch attempts, while the real transport contract is successful auto-resume with continued client progress events.
+  - `packages/cli/src/native-runtime-dependencies.test.ts` still required every native runtime to live in hard `dependencies`, even though `ctranslate2` is now intentionally host-owned via `optionalDependencies`.
+- Kept production law unchanged for this slice and narrowed the fixes to test/readiness semantics plus one lint-only cleanup in `packages/server/src/runtime-package-host.ts`.
+
+CI-equivalent local verification completed:
+
+- `pnpm format:check`
+- `pnpm lint:ci`
+- `pnpm typecheck`
+- `pnpm test:ci`
+- `pnpm test:browser:ci`

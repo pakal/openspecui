@@ -308,7 +308,7 @@ function applyDocumentTranslationPatch(
   patch: DocumentTranslationProgressPatch,
   fallback: Pick<DocumentTranslationResult, 'displayMode' | 'targetLanguage'>
 ): DocumentTranslationResult {
-  const segments = [...(current?.segments ?? [])]
+  const segments = current?.segments.slice() ?? []
   segments[patch.segmentIndex] = patch.segment
   return {
     displayMode: current?.displayMode ?? fallback.displayMode,

@@ -1102,6 +1102,126 @@ The system SHALL detect static rendering mode.
     expect(capturedSignal?.aborted).toBe(true)
   })
 
+  it('keeps rendering when translation patches arrive out of order', async () => {
+    let emitSparsePatches: (() => void) | undefined
+    let releaseFinalResult: (() => void) | undefined
+    translateMarkdownDocumentProgressivelyMock.mockImplementationOnce(async (args, onPatch) => {
+      emitSparsePatches = () => {
+        onPatch({
+          segmentIndex: 1,
+          segment: {
+            id: 'paragraph-world',
+            sourceStartOffset: 9,
+            sourceEndOffset: 14,
+            sourceKind: 'paragraph',
+            source: 'World',
+            translatorInput: 'World',
+            target: '世界',
+            kind: 'paragraph',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        })
+        onPatch({
+          segmentIndex: 2,
+          segment: {
+            id: 'paragraph-again',
+            sourceStartOffset: 16,
+            sourceEndOffset: 25,
+            sourceKind: 'paragraph',
+            source: 'Again here',
+            translatorInput: 'Again here',
+            target: '再次出现',
+            kind: 'paragraph',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        })
+      }
+      await new Promise<void>((resolve) => {
+        releaseFinalResult = resolve
+      })
+      return {
+        displayMode: args.displayMode,
+        sourceLanguage: 'en',
+        targetLanguage: args.targetLanguage,
+        segments: [
+          {
+            id: 'heading-hello',
+            sourceStartOffset: 0,
+            sourceEndOffset: 7,
+            sourceKind: 'heading',
+            source: 'Hello',
+            translatorInput: 'Hello',
+            target: '你好',
+            kind: 'heading',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+          {
+            id: 'paragraph-world',
+            sourceStartOffset: 9,
+            sourceEndOffset: 14,
+            sourceKind: 'paragraph',
+            source: 'World',
+            translatorInput: 'World',
+            target: '世界',
+            kind: 'paragraph',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+          {
+            id: 'paragraph-again',
+            sourceStartOffset: 16,
+            sourceEndOffset: 25,
+            sourceKind: 'paragraph',
+            source: 'Again here',
+            translatorInput: 'Again here',
+            target: '再次出现',
+            kind: 'paragraph',
+            sourceLanguage: 'en',
+            targetLanguage: args.targetLanguage,
+            status: 'translated',
+          },
+        ],
+      }
+    })
+
+    render(
+      <MarkdownViewer
+        markdown={'# Hello\n\nWorld\n\nAgain here'}
+        translationConfig={{
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Translate' }))
+    await waitFor(() => expect(emitSparsePatches).toBeTypeOf('function'))
+
+    act(() => {
+      emitSparsePatches?.()
+    })
+
+    expect(screen.getByRole('button', { name: 'Cancel translation' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Hello' })).toBeTruthy()
+
+    await act(async () => {
+      releaseFinalResult?.()
+    })
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: '你好' })).toBeTruthy())
+    expect(screen.getByText('世界')).toBeTruthy()
+    expect(screen.getByText('再次出现')).toBeTruthy()
+  })
+
   it('rejects stale late patches after the markdown generation changes', async () => {
     let emitStalePatch: (() => void) | undefined
     let releaseStaleResult: (() => void) | undefined
