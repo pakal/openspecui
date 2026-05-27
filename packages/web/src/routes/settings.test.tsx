@@ -2,6 +2,7 @@ import type {
   LocalModelAssetLog,
   LocalModelAssetState,
   LocalModelCatalogItem,
+  TranslationEngineId,
   TranslationEngineLifecycleStatus,
   TranslationModelDownloadPlan,
 } from '@openspecui/core/translator'
@@ -16,6 +17,28 @@ import { Settings } from './settings'
 
 const TEST_LOCAL_MODEL_COMMIT_HASH = 'abcdef1234567890abcdef1234567890abcdef12'
 const TEST_LOCAL_MODEL_SHORT_COMMIT_HASH = TEST_LOCAL_MODEL_COMMIT_HASH.slice(0, 6)
+
+type TranslationEngineInstallStreamInput = {
+  engineId: TranslationEngineId
+}
+
+type TranslationEngineInstallStreamEvent = {
+  type: 'status' | 'log' | 'exit'
+  lifecycle?: TranslationEngineLifecycleStatus
+  status?: {
+    state?: string
+    message?: string
+    progress?: number
+    error?: string
+  }
+  stream?: 'stdout' | 'stderr'
+  text?: string
+}
+
+type TranslationEngineInstallStreamHandlers = {
+  onData: (event: TranslationEngineInstallStreamEvent) => void
+  onError?: (error: unknown) => void
+}
 
 function createLocalAssetStateForTest(
   input: Omit<LocalModelAssetState, 'version' | 'profileLoad' | 'groupsState'> &
@@ -650,26 +673,6 @@ const {
       },
     })
 
-  const createMissingDependencyLifecycle = (
-    message: string
-  ): TranslationEngineLifecycleStatus =>
-    createTranslationEngineLifecycleStatus({
-      dependency: {
-        state: 'missing',
-        message,
-      },
-    })
-
-  const createInstallingLifecycle = (
-    message: string
-  ): TranslationEngineLifecycleStatus =>
-    createTranslationEngineLifecycleStatus({
-      dependency: {
-        state: 'installing',
-        message,
-      },
-    })
-
   const restoreTranslationMocks = () => {
     translationEnginesMock.getLifecycle.mockImplementation(async ({ engineId }) => {
       if (engineId === 'browser') {
@@ -705,18 +708,7 @@ const {
       translationEnginesMock.getLifecycle({ engineId })
     )
     translationEnginesMock.installStream.mockImplementation(
-      (
-        input: { engineId: 'browser' | 'local' | 'local-ct2' | 'openai' },
-        handlers: {
-          onData: (event: {
-            type: 'status' | 'log' | 'exit'
-            lifecycle?: TranslationEngineLifecycleStatus
-            stream?: 'stdout' | 'stderr'
-            text?: string
-          }) => void
-          onError?: (error: unknown) => void
-        }
-      ) => {
+      (input: TranslationEngineInstallStreamInput, handlers: TranslationEngineInstallStreamHandlers) => {
         const unsubscribe = vi.fn()
         queueMicrotask(() => {
           if (unsubscribe.mock.calls.length > 0) return
@@ -2024,10 +2016,14 @@ vi.mock('@/lib/trpc', () => ({
         mutate: translationEnginesMock.install,
       },
       installStream: {
-        subscribe: (input, handlers) =>
+        subscribe: (
+          input: TranslationEngineInstallStreamInput,
+          handlers: TranslationEngineInstallStreamHandlers
+        ) =>
           translationEnginesMock.installStream(input, {
             ...handlers,
-            onData: (event) => handlers.onData(normalizeLegacyLifecycleEvent(event, input.engineId)),
+            onData: (event: TranslationEngineInstallStreamEvent) =>
+              handlers.onData(normalizeLegacyLifecycleEvent(event, input.engineId)),
           }),
       },
       getModelDownloadPlan: {
