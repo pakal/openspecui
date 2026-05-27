@@ -13,10 +13,11 @@ const {
 } = runtimeSupport
 
 describe('ctranslate2 package shape', () => {
-  it('exports a Ct2Translator constructor type', async () => {
-    const mod = await import('../index.js')
-    expect(mod).toHaveProperty('Ct2Translator')
-    expect(typeof mod.Ct2Translator).toBe('function')
+  it('publishes a Ct2Translator constructor type declaration', () => {
+    const typeEntryPath = join(import.meta.dirname, '..', 'index.d.ts')
+    const typeEntry = readFileSync(typeEntryPath, 'utf8')
+
+    expect(typeEntry).toMatch(/export declare class Ct2Translator\b/)
   })
 
   it('publishes only ct2 native artifacts', () => {
