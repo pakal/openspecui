@@ -950,6 +950,32 @@ function createQ8PlanForTest(modelId: string): TranslationModelDownloadPlan {
   }
 }
 
+function createQ4PlanForTest(modelId: string): TranslationModelDownloadPlan {
+  const files = withLocalRevisionFiles(modelId, createQ4PlanFilesForTest())
+  return {
+    modelId,
+    estimatedTotalBytes: 125831658,
+    selectedGroupId: 'q4',
+    files,
+    groups: [
+      {
+        id: 'q4',
+        label: 'q4 (4-bit)',
+        description: '4-bit quantized ONNX profile.',
+        profile: 'q4',
+        dtype: 'q4',
+        commitHash: TEST_LOCAL_MODEL_COMMIT_HASH,
+        shortCommitHash: TEST_LOCAL_MODEL_SHORT_COMMIT_HASH,
+        status: 'downloaded',
+        estimatedTotalBytes: 125831658,
+        selectable: true,
+        selected: true,
+        files,
+      },
+    ],
+  }
+}
+
 function createFp16PlanFilesForTest(): TranslationModelDownloadPlan['files'] {
   return [
     { path: 'config.json', sizeBytes: 1503, required: true },
@@ -1155,6 +1181,16 @@ function createQ8AssetFilesForTest(
   downloadedBytesByPath: Partial<Record<string, number>>
 ): LocalModelAssetState['files'] {
   return createQ8PlanFilesForTest().map((file) => ({
+    path: file.path,
+    sizeBytes: file.sizeBytes,
+    downloadedBytes: downloadedBytesByPath[file.path] ?? 0,
+  }))
+}
+
+function createQ4AssetFilesForTest(
+  downloadedBytesByPath: Partial<Record<string, number>>
+): LocalModelAssetState['files'] {
+  return createQ4PlanFilesForTest().map((file) => ({
     path: file.path,
     sizeBytes: file.sizeBytes,
     downloadedBytes: downloadedBytesByPath[file.path] ?? 0,
@@ -4047,6 +4083,135 @@ describe('Settings', () => {
     expect(deleteButton.className).not.toContain('border')
     expect(deleteButton.className).not.toContain('shadow')
   })
+
+  it(
+    'reconciles Local download completion from panel truth after the server resolves a versioned group id',
+    async () => {
+      vi.stubGlobal(
+        'matchMedia',
+        vi.fn(() => ({
+          matches: false,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        }))
+      )
+      const modelId = 'onnx-community/opus-mt-en-zh'
+      const initialPlan = createQ4PlanForTest(modelId)
+      let downloadTriggered = false
+      localModelsMock.panelState.mockImplementation(async ({ selectedGroupId }) => {
+        if (!downloadTriggered) {
+          return {
+            modelId,
+            selectedGroupId: selectedGroupId ?? 'q4',
+            asset: createLocalAssetStateForTest({
+              modelId,
+              status: 'not-downloaded',
+              selected: true,
+              selectedGroupId: selectedGroupId ?? 'q4',
+              progress: 0,
+              bytesDownloaded: 0,
+              totalBytes: 125831658,
+              resumable: false,
+              plan: initialPlan,
+              files: createQ4AssetFilesForTest({}),
+              updatedAt: 100,
+            }),
+            downloadPlan: initialPlan,
+          }
+        }
+        const downloadedPlan: TranslationModelDownloadPlan = {
+          ...initialPlan,
+          selectedGroupId: 'q4-abcdef',
+          groups: initialPlan.groups?.map((group) => ({
+            ...group,
+            id: 'q4-abcdef',
+            baseGroupId: 'q4',
+            selected: true,
+            status: 'downloaded',
+          })),
+        }
+        return {
+          modelId,
+          selectedGroupId: 'q4-abcdef',
+          asset: createLocalAssetStateForTest({
+            modelId,
+            status: 'downloaded',
+            selected: true,
+            selectedGroupId: 'q4-abcdef',
+            progress: 1,
+            bytesDownloaded: 125831658,
+            totalBytes: 125831658,
+            resumable: false,
+            plan: downloadedPlan,
+            files: createQ4AssetFilesForTest({
+              'config.json': 1503,
+              'generation_config.json': 293,
+              'source.spm': 806435,
+              'target.spm': 804600,
+              'onnx/encoder_model_q4.onnx': 31457280,
+              'onnx/decoder_model_merged_q4.onnx': 94371840,
+            }),
+            updatedAt: 200,
+          }),
+          downloadPlan: downloadedPlan,
+        }
+      })
+      localModelsMock.download.mockImplementationOnce(async () => {
+        downloadTriggered = true
+        return { sessionId: 'session-1' }
+      })
+      useConfigSubscriptionMock.mockReturnValue({
+        data: {
+          translation: {
+            enabled: false,
+            targetLanguage: 'zh',
+            displayMode: 'direct',
+            cacheEnabled: false,
+            engineId: 'local',
+            engines: {
+              local: {
+                model: modelId,
+                selectedGroupId: 'q4',
+              },
+            },
+          },
+        },
+      })
+      useGlobalSettingsSubscriptionMock.mockReturnValue({
+        data: {
+          translationEngines: {
+            local: {
+              model: modelId,
+              selectedGroupId: 'q4',
+              hfEndpoint: '',
+            },
+          },
+        },
+      })
+      useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+      render(<Settings />)
+
+      await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+      const downloadButton = await screen.findByRole('button', { name: 'Download model' })
+      fireEvent.click(downloadButton)
+      expect(localModelsMock.download).toHaveBeenCalledWith({ modelId, groupId: 'q4' })
+
+      await waitFor(
+        () =>
+          expect(
+            screen.getByLabelText('Downloaded', { selector: '[data-local-plan-action="downloaded"]' })
+          ).toBeTruthy(),
+        { timeout: 4000 }
+      )
+      expect(screen.getByRole('button', { name: 'Delete model' })).toBeTruthy()
+      expect(localModelsMock.panelState).toHaveBeenLastCalledWith({
+        modelId,
+        selectedGroupId: 'q4',
+      })
+    },
+    10_000
+  )
 
   it('switches the displayed download file list when a different Local profile chip is selected', async () => {
     vi.stubGlobal(

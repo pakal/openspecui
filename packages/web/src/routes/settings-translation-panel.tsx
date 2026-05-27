@@ -463,6 +463,33 @@ function cacheManagedLocalPanelState(input: {
   }
 }
 
+function shouldPollManagedLocalPanelState(
+  panelState: LocalPanelStateData | null
+): boolean {
+  const status = panelState?.asset.status
+  return status === 'queued' || status === 'downloading' || status === 'deleting'
+}
+
+async function refreshManagedLocalPanelStateSnapshot(input: {
+  engineId: ManagedLocalTranslationEngineId
+  modelId: string
+  requestedSelectedGroupId?: string
+  queryClient: ReturnType<typeof useQueryClient>
+}): Promise<LocalPanelStateData> {
+  const panelState = await queryManagedLocalPanelState({
+    engineId: input.engineId,
+    modelId: input.modelId,
+    selectedGroupId: input.requestedSelectedGroupId,
+  })
+  cacheManagedLocalPanelState({
+    engineId: input.engineId,
+    panelState,
+    queryClient: input.queryClient,
+    requestedSelectedGroupId: input.requestedSelectedGroupId,
+  })
+  return panelState
+}
+
 export function SettingsTranslationPanel({ index }: { index: number }) {
   const inStaticMode = isStaticMode()
   const { data: config, isLoading: configLoading } = useConfigSubscription()
@@ -684,35 +711,26 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       onData: (log) => {
         const activeSelectedGroupId = nmtSelectedGroupIdRef.current
         const activeModelId = nmtModelRef.current.trim()
-        const querySelectedGroupId =
-          log.modelId === activeModelId
-            ? (activeSelectedGroupId ?? log.selectedGroupId)
-            : log.selectedGroupId
-        const selectedGroupIds = new Set<string | undefined>([
-          querySelectedGroupId,
-          log.selectedGroupId,
-        ])
-        if (selectedGroupIds.size === 0) selectedGroupIds.add(undefined)
-        for (const selectedGroupId of selectedGroupIds) {
-          const panelStateQueryKey = getManagedLocalPanelStateQueryKey({
-            engineId: activeManagedLocalEngineId,
-            modelId: log.modelId,
-            selectedGroupId,
-          })
-          void queryManagedLocalPanelState({
-            engineId: activeManagedLocalEngineId,
-            modelId: log.modelId,
-            selectedGroupId,
-          })
-            .then((panelState) => {
-              queryClientRef.current.setQueryData<LocalPanelStateData | undefined>(
-                panelStateQueryKey,
-                (current) =>
-                  replaceQueryCacheData(current, panelState) as LocalPanelStateData | undefined
-              )
+        const requestedSelectedGroupId =
+          log.modelId === activeModelId ? activeSelectedGroupId : log.selectedGroupId
+        void queryManagedLocalPanelState({
+          engineId: activeManagedLocalEngineId,
+          modelId: log.modelId,
+          selectedGroupId: requestedSelectedGroupId,
+        })
+          .then((panelState) => {
+            cacheManagedLocalPanelState({
+              engineId: activeManagedLocalEngineId,
+              panelState,
+              queryClient: queryClientRef.current,
+              requestedSelectedGroupId,
             })
-            .catch(() => undefined)
-        }
+            if (log.modelId === activeModelId) {
+              lastLocalPanelStateRef.current = panelState
+              setNmtSelectedGroupId(panelState.selectedGroupId)
+            }
+          })
+          .catch(() => undefined)
 
         void listManagedLocalCatalog(activeManagedLocalEngineId)
           .then((local) => setNmtLocalOptions(local.items))
@@ -756,6 +774,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
         ? trpcClient.localModels.download.mutate(input)
         : trpcClient.localCt2Models.download.mutate(input)
     },
+    onSuccess: async (_result, input) => {
+      if (!activeManagedLocalEngineId) return
+      const panelState = await refreshManagedLocalPanelStateSnapshot({
+        engineId: activeManagedLocalEngineId,
+        modelId: input.modelId,
+        requestedSelectedGroupId: input.groupId,
+        queryClient,
+      })
+      lastLocalPanelStateRef.current = panelState
+      setNmtSelectedGroupId(panelState.selectedGroupId)
+    },
   })
   const pauseLocalModelMutation = useMutation({
     mutationFn: (input: { modelId: string; groupId?: string }) => {
@@ -765,6 +794,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       return activeManagedLocalEngineId === 'local'
         ? trpcClient.localModels.pause.mutate(input)
         : trpcClient.localCt2Models.pause.mutate(input)
+    },
+    onSuccess: async (_result, input) => {
+      if (!activeManagedLocalEngineId) return
+      const panelState = await refreshManagedLocalPanelStateSnapshot({
+        engineId: activeManagedLocalEngineId,
+        modelId: input.modelId,
+        requestedSelectedGroupId: input.groupId,
+        queryClient,
+      })
+      lastLocalPanelStateRef.current = panelState
+      setNmtSelectedGroupId(panelState.selectedGroupId)
     },
   })
   const resumeLocalModelMutation = useMutation({
@@ -776,6 +816,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
         ? trpcClient.localModels.resume.mutate(input)
         : trpcClient.localCt2Models.resume.mutate(input)
     },
+    onSuccess: async (_result, input) => {
+      if (!activeManagedLocalEngineId) return
+      const panelState = await refreshManagedLocalPanelStateSnapshot({
+        engineId: activeManagedLocalEngineId,
+        modelId: input.modelId,
+        requestedSelectedGroupId: input.groupId,
+        queryClient,
+      })
+      lastLocalPanelStateRef.current = panelState
+      setNmtSelectedGroupId(panelState.selectedGroupId)
+    },
   })
   const deleteLocalModelMutation = useMutation({
     mutationFn: (input: { modelId: string; groupId?: string }) => {
@@ -785,6 +836,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       return activeManagedLocalEngineId === 'local'
         ? trpcClient.localModels.delete.mutate(input)
         : trpcClient.localCt2Models.delete.mutate(input)
+    },
+    onSuccess: async (_result, input) => {
+      if (!activeManagedLocalEngineId) return
+      const panelState = await refreshManagedLocalPanelStateSnapshot({
+        engineId: activeManagedLocalEngineId,
+        modelId: input.modelId,
+        requestedSelectedGroupId: input.groupId,
+        queryClient,
+      })
+      lastLocalPanelStateRef.current = panelState
+      setNmtSelectedGroupId(panelState.selectedGroupId)
     },
   })
   const refreshLocalProfilesMutation = useMutation({
@@ -1092,6 +1154,20 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const nmtResolvedHfEndpoint = nmtHfEndpoint.trim() || 'https://huggingface.co'
   const localPlanLoading =
     (localPanelStateQuery.isLoading || localPanelStateQuery.isFetching) && !selectedLocalAsset
+  useEffect(() => {
+    if (!activeManagedLocalEngineId || !nmtModelId || inStaticMode) return
+    if (!shouldPollManagedLocalPanelState(localPanelState)) return
+    const timer = window.setTimeout(() => {
+      void localPanelStateQuery.refetch()
+    }, 750)
+    return () => window.clearTimeout(timer)
+  }, [
+    activeManagedLocalEngineId,
+    inStaticMode,
+    localPanelState,
+    localPanelStateQuery,
+    nmtModelId,
+  ])
   const shouldShowInstallFlow =
     effectiveTranslationEngineId !== null && shouldShowTranslationEngineInstallGate(resolvedLifecycle)
   const startBrowserPairPreparation = useCallback(

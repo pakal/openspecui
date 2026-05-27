@@ -402,7 +402,7 @@ export const localModelsRouter = router({
       )
       return {
         modelId: input.modelId,
-        selectedGroupId: input.selectedGroupId ?? asset.plan?.selectedGroupId,
+        selectedGroupId: asset.selectedGroupId ?? asset.plan?.selectedGroupId,
         asset,
         downloadPlan: asset.plan ?? null,
       }
@@ -590,7 +590,7 @@ export const localCt2ModelsRouter = router({
       )
       return {
         modelId: input.modelId,
-        selectedGroupId: input.selectedGroupId ?? asset.plan?.selectedGroupId,
+        selectedGroupId: asset.selectedGroupId ?? asset.plan?.selectedGroupId,
         asset,
         downloadPlan: asset.plan ?? null,
       }
