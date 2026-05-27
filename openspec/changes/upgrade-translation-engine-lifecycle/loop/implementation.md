@@ -51,3 +51,10 @@ Key findings from this self-review loop:
 - `getTranslationEngineLifecycleMessage(...)` correctly prioritizes runtime readiness/failure over dependency copy when runtime state is present; the previous core/web assertions were stale.
 - Document translation readiness now depends on the lifecycle precheck first, then managed-local `panelState`; tests that still asserted `localModels.state` as the primary call path were invalid.
 - `settings.test.tsx` still contained extensive legacy install-only fixtures. A test-only compatibility layer was added to normalize legacy `installStatus` fixtures/events into lifecycle truth so the suite can converge without reintroducing platform regressions into production code.
+
+## 2026-05-27 19:49 CST Progress
+
+- Started the near-production runtime walkthrough by building `openspecui`, packing the published host shape, and installing it into an isolated temp directory with a clean `HOME`.
+- The first real npm-host install exposed a packaging law violation: the `// ...` documentation keys had been placed inside `dependencies` / `optionalDependencies`, which made `npm install` fail with `EINVALIDPACKAGENAME`.
+- Corrected the packaging law by moving those `// ...` documentation keys to top-level `package.json` fields while keeping the dependency maps machine-parseable for npm/pnpm host installs.
+- Repacked the host tarball and resumed verification from the isolated npm host path so the remaining browser walkthrough can continue from a package-manager-valid baseline.
