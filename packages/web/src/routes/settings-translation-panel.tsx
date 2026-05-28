@@ -2836,7 +2836,7 @@ function LocalDownloadFilesCard({
     state?.profileLoad?.status === 'loading'
       ? (state.profileLoad.message ?? 'Loading model files…')
       : null
-  const isResolving = loading && !plan && displayFiles.length === 0
+  const isResolving = displayFiles.length === 0 && (loading || profileLoadMessage !== null)
 
   return (
     <div className="space-y-3">

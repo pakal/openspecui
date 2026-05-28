@@ -1,6 +1,7 @@
 import type { DocumentTranslationConfig } from '@openspecui/core/document-translation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  isRenderableTranslationSegment,
   translateMarkdownDocumentProgressively,
   type BrowserTranslationStatus,
   type BrowserTranslationSupportTableState,
@@ -303,7 +304,7 @@ export function useDocumentTranslation(
 function isDocumentTranslationSegment(
   segment: unknown
 ): segment is NonNullable<DocumentTranslationResult['segments'][number]> {
-  return typeof segment === 'object' && segment !== null && !Array.isArray(segment)
+  return isRenderableTranslationSegment(segment)
 }
 
 function getDocumentTranslationFailureMessage(result: DocumentTranslationResult): string | null {

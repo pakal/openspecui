@@ -3574,6 +3574,72 @@ describe('Settings', () => {
     expect(screen.queryByText('model.bin')).toBeNull()
   })
 
+  it('keeps the CT2 download card in loading state when artifact refresh has only produced an empty plan shell', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    const modelId = 'ooeoeo/opus-mt-en-zh-ct2-float16'
+    const emptyPlan: TranslationModelDownloadPlan = {
+      modelId,
+      estimatedTotalBytes: 0,
+      selectedGroupId: 'float16',
+      files: [],
+      groups: [],
+    }
+    localCt2ModelsMock.panelState.mockResolvedValue({
+      modelId,
+      selectedGroupId: 'float16',
+      asset: createLocalAssetStateForTest({
+        modelId,
+        status: 'not-downloaded',
+        selected: true,
+        selectedGroupId: 'float16',
+        progress: 0,
+        resumable: false,
+        plan: emptyPlan,
+        files: [],
+        profileLoad: {
+          status: 'loading',
+          message: 'Loading CT2 model artifacts.',
+          updatedAt: 101,
+        },
+        updatedAt: 101,
+      }),
+      downloadPlan: emptyPlan,
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+          engineId: 'local-ct2',
+          engines: {
+            local: {},
+            localCt2: {
+              model: modelId,
+              selectedGroupId: 'float16',
+            },
+            openai: {},
+          },
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    expect(await screen.findByText('Loading CT2 model artifacts.')).toBeTruthy()
+    expect(screen.queryByText('No runtime download plan available.')).toBeNull()
+  })
+
   it('does not refresh remote Local model profiles on initial mount when local profiles exist', async () => {
     vi.stubGlobal(
       'matchMedia',

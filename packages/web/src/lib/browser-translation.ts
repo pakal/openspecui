@@ -105,8 +105,40 @@ export interface DocumentTranslationProgressPatch {
   segment: TranslationSegment
 }
 
+function isFiniteTranslationOffset(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isTranslationSegmentKind(value: unknown): value is TranslationSegment['kind'] {
+  return (
+    value === 'heading' ||
+    value === 'listItem' ||
+    value === 'paragraph' ||
+    value === 'blockquote' ||
+    value === 'text'
+  )
+}
+
 export function isRenderableTranslationSegment(segment: unknown): segment is TranslationSegment {
-  return typeof segment === 'object' && segment !== null && !Array.isArray(segment)
+  if (typeof segment !== 'object' || segment === null || Array.isArray(segment)) return false
+
+  const id = Reflect.get(segment, 'id')
+  const sourceStartOffset = Reflect.get(segment, 'sourceStartOffset')
+  const sourceEndOffset = Reflect.get(segment, 'sourceEndOffset')
+  const sourceKind = Reflect.get(segment, 'sourceKind')
+  const source = Reflect.get(segment, 'source')
+  const translatorInput = Reflect.get(segment, 'translatorInput')
+  const kind = Reflect.get(segment, 'kind')
+
+  return (
+    typeof id === 'string' &&
+    isFiniteTranslationOffset(sourceStartOffset) &&
+    isFiniteTranslationOffset(sourceEndOffset) &&
+    typeof sourceKind === 'string' &&
+    typeof source === 'string' &&
+    typeof translatorInput === 'string' &&
+    isTranslationSegmentKind(kind)
+  )
 }
 
 interface PendingTranslationJob {
