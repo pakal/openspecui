@@ -24,7 +24,7 @@ import { checkLocalDirectionalModelLanguagePair } from '@openspecui/core/transla
 import {
   DEFAULT_TRANSLATION_ENGINE_ID,
   TRANSLATOR_CONTRACT_VERSION,
-  isManagedLocalTranslationEngineId,
+  isDirectionalManagedLocalTranslationEngineId,
   type TranslationEngineId,
   type Translator,
   type TranslatorFactory,
@@ -103,6 +103,10 @@ export interface DocumentTranslationResult {
 export interface DocumentTranslationProgressPatch {
   segmentIndex: number
   segment: TranslationSegment
+}
+
+export function isRenderableTranslationSegment(segment: unknown): segment is TranslationSegment {
+  return typeof segment === 'object' && segment !== null && !Array.isArray(segment)
 }
 
 interface PendingTranslationJob {
@@ -532,7 +536,9 @@ export async function translateMarkdownDocument(args: {
     translatedSegments[segmentIndex] = segment
   }).then((result) => ({
     ...result,
-    segments: translatedSegments.length > 0 ? translatedSegments : result.segments,
+    segments: normalizeTranslationSegments(
+      translatedSegments.length > 0 ? translatedSegments : result.segments
+    ),
   }))
 }
 
@@ -646,7 +652,7 @@ export async function translateMarkdownDocumentProgressively(
     )
 
     return {
-      segments: translatedSegments,
+      segments: normalizeTranslationSegments(translatedSegments),
       displayMode: args.displayMode,
       sourceLanguage: languageDetection.documentLanguage,
       targetLanguage: args.targetLanguage,
@@ -848,7 +854,9 @@ function getUnsupportedEngineLanguagePairMessage(input: {
   sourceLanguage: string
   targetLanguage: string
 }): string | null {
-  if (!isManagedLocalTranslationEngineId(input.engine.cacheIdentity.engineId)) return null
+  if (!isDirectionalManagedLocalTranslationEngineId(input.engine.cacheIdentity.engineId)) {
+    return null
+  }
   const directionCheck = checkLocalDirectionalModelLanguagePair({
     model: input.engine.cacheIdentity.model,
     sourceLanguage: input.sourceLanguage,
@@ -859,6 +867,12 @@ function getUnsupportedEngineLanguagePairMessage(input: {
     directionCheck.message ??
     'Selected local model does not support the detected translation direction.'
   )
+}
+
+export function normalizeTranslationSegments(
+  segments: readonly TranslationSegment[]
+): TranslationSegment[] {
+  return segments.filter(isRenderableTranslationSegment)
 }
 
 function summarizeTranslationLogThroughput(
