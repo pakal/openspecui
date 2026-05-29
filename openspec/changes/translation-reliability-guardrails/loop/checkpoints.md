@@ -59,3 +59,9 @@
   - `pnpm --filter @openspecui/web exec tsc --noEmit`
   - `pnpm --filter @openspecui/server typecheck`
   - `git diff --check`
+- 2026-05-29 native process isolation scoped checks passed:
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-runtime-strategy.test.ts src/translation-engine-service.test.ts src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/server typecheck`
+  - `pnpm --filter @openspecui/core exec vitest run src/translator.test.ts`
+  - `pnpm --filter @openspecui/server build`
+  - `git diff --check`

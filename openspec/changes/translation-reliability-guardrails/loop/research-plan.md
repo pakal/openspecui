@@ -84,6 +84,27 @@
   - otherwise write engine selection and managed-local model/profile settings to global settings.
 - Keep provider endpoint and memory-budget settings global in this pass because they describe user/runtime environment rather than project identity.
 
+## Follow-up Finding: Native Runtime Crash Boundary
+
+- The current managed-local executor uses `worker_threads.Worker`.
+- `worker_threads` can bound V8 heap and isolate JS exceptions, but it cannot contain a native addon `std::terminate`/abort because all workers share the same Node process.
+- The observed `llama-addon.node` stack indicates `node-llama-cpp` threw or terminated in the native/N-API async worker completion path, so JS `try/catch` and `worker.on('error')` are insufficient.
+- The `control-looking token ... '</s>'` line is a model/tokenizer warning; the fatal condition is the uncaught native exception and process abort.
+
+## Follow-up Plan: Process-Isolated Managed Local Executors
+
+- Split the managed-local executor host from the translation task protocol:
+  - keep the existing message protocol and factory creation law,
+  - allow a thread host for lower-risk managed-local engines,
+  - add a process host for native-crash-risk engines such as `local-llama`.
+- Pass the same runtime strategy output to both hosts:
+  - runtime config remains engine-specific,
+  - V8 heap limit is applied through worker `resourceLimits` for thread hosts,
+  - V8 heap limit is applied through `--max-old-space-size` for process hosts,
+  - RSS watchdog is enforced by the process host parent and kills the child before it can swap the system.
+- Treat abnormal child process exit as `runtime` batch failure instead of a server crash.
+- Keep the first rollout focused on `local-llama`; do not force `local`/`local-ct2` to child processes unless evidence shows their native layers can abort the host.
+
 ## Verification Strategy
 
 - Focused unit tests:

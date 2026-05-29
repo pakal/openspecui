@@ -57,3 +57,52 @@
 - Project-level translation engine selection SHALL remain supported when the project config explicitly contains `translation.engineId`.
 - Reads SHALL resolve project-level translation engine fields before global settings.
 - Writes SHALL update project config only when the related project-level field already exists; otherwise writes SHALL update global settings.
+
+## Native Runtime Crash Follow-up User Input
+
+> 我翻译的时候遇到异常：
+>
+> ```
+> load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+> [node-llama-cpp] load: control-looking token: 128247 '</s>' was not control-type; this is probably a bug in the model. its type will be overridden
+> WARNING: Using native backtrace. Set GGML_BACKTRACE_LLDB for more info.
+> WARNING: GGML_BACKTRACE_LLDB may cause native MacOS Terminal.app to crash.
+> See: https://github.com/ggml-org/llama.cpp/pull/17869
+> 0   libggml-base.dylib                  0x00000001244ad44c ggml_print_backtrace + 276
+> 1   libggml-base.dylib                  0x00000001244c34fc _ZL23ggml_uncaught_exceptionv + 12
+> 2   libc++abi.dylib                     0x000000018738d75c _ZSt11__terminatePFvvE + 16
+> 3   libc++abi.dylib                     0x000000018738fbe4 __cxa_get_exception_ptr + 0
+> 4   libc++abi.dylib                     0x000000018737c09c __cxa_get_globals + 0
+> 5   llama-addon.node                    0x0000000124377874 _ZNK4Napi5Error26ThrowAsJavaScriptExceptionEv + 224
+> 6   llama-addon.node                    0x000000012437e198 _ZN4Napi11AsyncWorker14OnWorkCompleteENS_3EnvE11napi_status + 232
+> 7   node                                0x0000000100421f04 _ZN12_GLOBAL__N_16uvimpl4Work19AfterThreadPoolWorkEi + 136
+> 8   node                                0x000000010042242c _ZZN4node14ThreadPoolWork12ScheduleWorkEvENKUlP9uv_work_siE_clES2_i + 320
+> 9   node                                0x00000001004222e0 _ZZN4node14ThreadPoolWork12ScheduleWorkEvENUlP9uv_work_siE_8__invokeES2_i + 28
+> 10  node                                0x000000010131de24 uv__work_done + 184
+> 11  node                                0x0000000101321874 uv__async_io + 304
+> 12  node                                0x000000010133616c uv__io_poll + 1432
+> 13  node                                0x00000001013221c8 uv_run + 568
+> 14  node                                0x00000001003e6a74 _ZN4node11Environment14CleanupHandlesEv + 188
+> 15  node                                0x00000001003e7188 _ZN4node11Environment10RunCleanupEv + 292
+> 16  node                                0x000000010035550c _ZN4node15FreeEnvironmentEPNS_11EnvironmentE + 120
+> 17  node                                0x000000010059d4bc _ZN4node6worker6Worker3RunEv + 2428
+> 18  node                                0x00000001005a1cd4 _ZZN4node6worker6Worker11StartThreadERKN2v820FunctionCallbackInfoINS2_5ValueEEEEN3$_08__invokeEPv + 80
+> 19  libsystem_pthread.dylib             0x00000001873d9c58 _pthread_start + 136
+> 20  libsystem_pthread.dylib             0x00000001873d4c1c thread_start + 8
+> libc++abi: terminating due to uncaught exception of type Napi::Error:
+> /Users/kzf/Dev/GitHub/jixoai-labs/openspecui/packages/cli:
+>  ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  openspecui@3.11.3 dev: `NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--conditions=development" tsx src/cli.ts --dir /Users/kzf/Dev/GitHub/jixoai-labs/agenter`
+> Exit status 134
+>  ELIFECYCLE  Command failed with exit code 134.
+> ```
+>
+> 两个问题，为什么会有异常？为什么异常会导致程序崩溃
+
+> 那就升级成子进程，同时内存限制也要做。
+
+## Native Runtime Crash Follow-up Acceptance Boundary
+
+- Native-crash-risk translation engines SHALL run outside the OpenSpecUI server process.
+- A native runtime abort or uncaught N-API/C++ exception SHALL surface as a classified translation runtime failure, not terminate the CLI/server process.
+- The process-isolated host SHALL still receive the engine memory budget policy.
+- The process-isolated host SHALL enforce a V8 heap limit and an RSS watchdog derived from the engine memory budget.

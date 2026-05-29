@@ -40,10 +40,14 @@
 - One ownership readiness correction was made during verification:
   - the Settings UI now resolves the effective engine from the shared project-presence/global fallback resolver,
   - engine selection waits for the project presence signal and only waits for global settings when the project does not own `translation.engineId`.
+- One native runtime isolation correction is being applied after a real `node-llama-cpp` crash:
+  - native-crash-risk engines are moved from worker-thread isolation to process isolation,
+  - local-llama uses the process host so native aborts become classified runtime failures instead of server process exits,
+  - the same memory budget strategy feeds both JS heap limits and a process RSS watchdog.
 
 ## Loopback Triggers
 
 - If a heavy local engine cannot support per-input timeout/error isolation without unsafe runtime hacks, loop back and revise the strategy boundary before widening UI promises.
 - If retry UX requires target-specific rendering behavior that cannot be expressed through the shared segment renderer, loop back and re-evaluate the renderer law instead of hardcoding engine-specific UI branches.
 - If CI or BDD checks reveal that partial-error streaming breaks existing translation availability flows, loop back through the research-plan and update the execution order before continuing.
-- If future managed-local engines need process isolation that is not expressible via the current worker protocol, loop back and introduce a broader executor strategy interface rather than branching the UI/runtime flow.
+- If future managed-local engines need process isolation beyond the current host selector, loop back and promote the host selector into per-engine manifest metadata rather than branching UI/runtime flow.
