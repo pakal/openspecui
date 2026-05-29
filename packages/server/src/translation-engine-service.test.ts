@@ -7,7 +7,7 @@ import {
   type TranslationModelDownloadPlan,
   type TranslatorFactory,
 } from '@openspecui/core'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -117,6 +117,12 @@ describe('TranslationEngineService', () => {
       localLlamaCacheDir,
       localLlamaAssetIndexPath,
       localLlamaFetchCachePath,
+      readRuntimeMemory: () => ({
+        totalMemoryMb: 16 * 1024,
+        availableMemoryMb: 12 * 1024,
+        platform: 'darwin',
+        arch: 'arm64',
+      }),
     })
     llamaCreateContextMock.mockReset()
     llamaCreateContextMock.mockResolvedValue({
@@ -258,6 +264,39 @@ describe('TranslationEngineService', () => {
         message: 'OpenAI completion translation is bundled with the server runtime.',
       },
     })
+  })
+
+  it('selects translation engines globally when the project has no engine override', async () => {
+    await service.selectEngine('local-llama')
+
+    await expect(new GlobalSettingsManager(settingsPath).readSettings()).resolves.toMatchObject({
+      translationEngines: {
+        engineId: 'local-llama',
+      },
+    })
+    await expect(
+      readFile(join(projectDir, 'openspec', '.openspecui.json'), 'utf-8')
+    ).rejects.toThrow()
+  })
+
+  it('keeps translation engine selection in project config when the project owns the field', async () => {
+    await mkdir(join(projectDir, 'openspec'), { recursive: true })
+    await writeFile(
+      join(projectDir, 'openspec', '.openspecui.json'),
+      JSON.stringify({ translation: { engineId: 'local' } }),
+      'utf-8'
+    )
+
+    await service.selectEngine('local-llama')
+
+    await expect(new GlobalSettingsManager(settingsPath).readSettings()).resolves.toMatchObject({
+      translationEngines: {
+        engineId: 'browser',
+      },
+    })
+    await expect(readFile(join(projectDir, 'openspec', '.openspecui.json'), 'utf-8')).resolves.toBe(
+      '{\n  "translation": {\n    "engineId": "local-llama"\n  }\n}'
+    )
   })
 
   it('uses strict repository profile files for local download plans', async () => {
@@ -715,7 +754,7 @@ describe('TranslationEngineService', () => {
       expect.objectContaining({
         model: 'tencent/Hy-MT2-1.8B-1.25Bit-GGUF',
         runtimeConfig: {
-          gpuLayers: 8,
+          gpuLayers: 0,
           contextSize: 1024,
           batchSize: 128,
           flashAttention: false,

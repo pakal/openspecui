@@ -120,6 +120,30 @@ describe('GlobalSettingsManager', () => {
     ).toEqual({ translationCache: { entryLimit: 12000 } })
   })
 
+  it('persists global translation engine selection outside project config', async () => {
+    await settingsManager.writeSettings({
+      translationEngines: {
+        engineId: 'local-llama',
+      },
+    })
+    clearCache()
+
+    const settings = await settingsManager.readSettings()
+    expect(settings.translationEngines.engineId).toBe('local-llama')
+    await expect(readFile(settingsPath, 'utf-8')).resolves.toBe(
+      '{\n  "translationEngines": {\n    "engineId": "local-llama"\n  }\n}'
+    )
+
+    await settingsManager.writeSettings({
+      translationEngines: {
+        engineId: 'browser',
+      },
+    })
+    clearCache()
+
+    await expect(settingsManager.readSettings()).resolves.toEqual(DEFAULT_GLOBAL_SETTINGS)
+  })
+
   it('merges translator engine settings and prunes default siblings', async () => {
     await settingsManager.writeSettings({
       translationEngines: {

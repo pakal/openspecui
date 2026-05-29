@@ -13,7 +13,9 @@ import {
 import { reactiveReadFile, updateReactiveFileCache } from './reactive-fs/index.js'
 import {
   TranslationEngineGlobalSettingsSchema,
+  TranslationEngineIdSchema,
   type TranslationEngineGlobalSettingsUpdate,
+  type TranslationEngineId,
   type TranslationLocalCt2Settings,
   type TranslationLocalLlamaSettings,
   type TranslationLocalSettings,
@@ -39,6 +41,7 @@ export type OpenSpecUIGlobalSettingsUpdate = {
 export type PersistedOpenSpecUIGlobalSettings = {
   translationCache?: Partial<TranslationCacheSettings>
   translationEngines?: {
+    engineId?: TranslationEngineId
     openai?: Partial<TranslationOpenAISettings>
     local?: Partial<TranslationLocalSettings>
     localCt2?: Partial<TranslationLocalCt2Settings>
@@ -52,6 +55,12 @@ export const DEFAULT_GLOBAL_SETTINGS: OpenSpecUIGlobalSettings =
 const PERSISTED_GLOBAL_SETTINGS_SANITIZE_RULES = [
   { kind: 'object', path: ['translationCache'], fallback: {} },
   { kind: 'object', path: ['translationEngines'], fallback: {} },
+  {
+    kind: 'field',
+    path: ['translationEngines', 'engineId'],
+    schema: TranslationEngineIdSchema,
+    fallback: DEFAULT_GLOBAL_SETTINGS.translationEngines.engineId,
+  },
   { kind: 'object', path: ['translationEngines', 'openai'], fallback: {} },
   { kind: 'object', path: ['translationEngines', 'local'], fallback: {} },
   { kind: 'object', path: ['translationEngines', 'localCt2'], fallback: {} },
@@ -117,6 +126,9 @@ export function toPersistedGlobalSettings(
   const translationEngines: NonNullable<PersistedOpenSpecUIGlobalSettings['translationEngines']> =
     {}
   const defaultTranslationEngines = DEFAULT_GLOBAL_SETTINGS.translationEngines
+  if (settings.translationEngines.engineId !== defaultTranslationEngines.engineId) {
+    translationEngines.engineId = settings.translationEngines.engineId
+  }
 
   const openai: Partial<TranslationOpenAISettings> = {}
   if (settings.translationEngines.openai.baseUrl !== defaultTranslationEngines.openai.baseUrl) {
@@ -273,6 +285,7 @@ export class GlobalSettingsManager {
       },
       translationEngines: {
         ...current.translationEngines,
+        engineId: update.translationEngines?.engineId ?? current.translationEngines.engineId,
         openai: mergeNullablePatch(
           current.translationEngines.openai,
           update.translationEngines?.openai

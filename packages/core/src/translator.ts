@@ -826,6 +826,7 @@ export const TranslationLocalLlamaSettingsSchema = z.object({
 export type TranslationLocalLlamaSettings = z.infer<typeof TranslationLocalLlamaSettingsSchema>
 
 export const TranslationEngineGlobalSettingsSchema = z.object({
+  engineId: TranslationEngineIdSchema.default(DEFAULT_TRANSLATION_ENGINE_ID),
   openai: TranslationOpenAISettingsSchema.default(TranslationOpenAISettingsSchema.parse({})),
   local: TranslationLocalSettingsSchema.default(TranslationLocalSettingsSchema.parse({})),
   localCt2: TranslationLocalCt2SettingsSchema.default(TranslationLocalCt2SettingsSchema.parse({})),
@@ -837,6 +838,7 @@ export const TranslationEngineGlobalSettingsSchema = z.object({
 export type TranslationEngineGlobalSettings = z.infer<typeof TranslationEngineGlobalSettingsSchema>
 
 export type TranslationEngineGlobalSettingsUpdate = {
+  engineId?: TranslationEngineId
   openai?: Partial<TranslationOpenAISettings>
   local?: Partial<Omit<TranslationLocalSettings, 'selectedGroupId'>> & {
     selectedGroupId?: TranslationLocalSettings['selectedGroupId'] | null

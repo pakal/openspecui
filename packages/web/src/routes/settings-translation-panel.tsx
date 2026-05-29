@@ -23,7 +23,11 @@ import {
   getTranslationTestSourceSample,
 } from '@/lib/translation-test-samples'
 import { trpc, trpcClient } from '@/lib/trpc'
-import { useConfigSubscription, useGlobalSettingsSubscription } from '@/lib/use-subscription'
+import {
+  useConfigPresenceSubscription,
+  useConfigSubscription,
+  useGlobalSettingsSubscription,
+} from '@/lib/use-subscription'
 import {
   DEFAULT_TRANSLATION_CACHE_ENTRY_LIMIT,
   type DocumentTranslationConfigUpdate,
@@ -634,7 +638,8 @@ async function refreshManagedLocalArtifactsSnapshot(input: {
 export function SettingsTranslationPanel({ index }: { index: number }) {
   const inStaticMode = isStaticMode()
   const { data: config, isLoading: configLoading } = useConfigSubscription()
-  const { data: globalSettings } = useGlobalSettingsSubscription()
+  const { data: configPresence, isLoading: configPresenceLoading } = useConfigPresenceSubscription()
+  const { data: globalSettings, isLoading: globalSettingsLoading } = useGlobalSettingsSubscription()
   const {
     data: engines,
     refetch: refetchEngines,
@@ -708,11 +713,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const lastLocalPanelStateRef = useRef<LocalPanelStateData | null>(null)
   const autoRefreshLocalArtifactsKeyRef = useRef<string | null>(null)
   const resolvedTranslationConfig = useMemo(
-    () => resolveDocumentTranslationConfig(config?.translation, globalSettings),
-    [config?.translation, globalSettings]
+    () => resolveDocumentTranslationConfig(config?.translation, globalSettings, configPresence),
+    [config?.translation, configPresence, globalSettings]
   )
   const activeTranslationEngineCandidate =
-    translationEngineId ?? config?.translation?.engineId ?? null
+    translationEngineId ?? resolvedTranslationConfig?.engineId ?? null
   const activeManagedLocalEngineId = isManagedLocalTranslationEngineId(
     activeTranslationEngineCandidate
   )
@@ -730,7 +735,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       config?.translation?.targetLanguage ?? DEFAULT_TRANSLATION_TARGET_LANGUAGE
     )
     setTranslationDisplayMode(config?.translation?.displayMode ?? DEFAULT_TRANSLATION_DISPLAY_MODE)
-    setTranslationEngineId(config?.translation?.engineId ?? 'browser')
+    setTranslationEngineId(resolvedTranslationConfig?.engineId ?? 'browser')
     setTranslationCacheEnabled(
       config?.translation?.cacheEnabled ?? DEFAULT_TRANSLATION_CACHE_ENABLED
     )
@@ -738,7 +743,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     config?.translation?.cacheEnabled,
     config?.translation?.displayMode,
     config?.translation?.enabled,
-    config?.translation?.engineId,
+    resolvedTranslationConfig?.engineId,
     config?.translation?.targetLanguage,
   ])
 
@@ -927,6 +932,34 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       await refetchEngines()
     },
   })
+  const saveTranslationEngineMutation = useMutation({
+    mutationFn: (engineId: TranslationEngineId) =>
+      trpcClient.translationEngines.select.mutate({ engineId }),
+    onSuccess: async () => {
+      await refetchEngines()
+    },
+  })
+  const saveManagedLocalSelectionSettings = useCallback(
+    (
+      engineId: ManagedLocalTranslationEngineId,
+      patch: { model?: string; selectedGroupId?: string | null }
+    ) => {
+      if (configPresence?.translation.engineId) {
+        saveTranslationConfigMutation.mutate({
+          engines: createManagedLocalProjectSettingsPatch(engineId, patch),
+        })
+        return
+      }
+      saveGlobalSettingsMutation.mutate({
+        translationEngines: createManagedLocalGlobalSettingsPatch(engineId, patch),
+      })
+    },
+    [
+      configPresence?.translation.engineId,
+      saveGlobalSettingsMutation,
+      saveTranslationConfigMutation,
+    ]
+  )
   const downloadLocalModelMutation = useMutation({
     mutationFn: (input: { modelId: string; groupId?: string }) => {
       if (!activeManagedLocalEngineId) {
@@ -1130,9 +1163,14 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     },
   })
 
-  const engineConfigReady = inStaticMode || config !== undefined
+  const projectOwnsTranslationEngineId = configPresence?.translation.engineId === true
+  const engineConfigReady =
+    inStaticMode ||
+    (config !== undefined &&
+      configPresence !== undefined &&
+      (projectOwnsTranslationEngineId || globalSettings !== undefined))
   const effectiveTranslationEngineId = engineConfigReady
-    ? (translationEngineId ?? config?.translation?.engineId ?? 'browser')
+    ? (translationEngineId ?? resolvedTranslationConfig?.engineId ?? 'browser')
     : null
   const effectiveManagedLocalEngineId = isManagedLocalTranslationEngineId(
     effectiveTranslationEngineId
@@ -1226,7 +1264,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     if (selectedEngine?.lifecycle) {
       return selectedEngine.lifecycle
     }
-    if (!effectiveTranslationEngineId || effectiveTranslationEngineId === 'browser' || selectedEngine) {
+    if (
+      !effectiveTranslationEngineId ||
+      effectiveTranslationEngineId === 'browser' ||
+      selectedEngine
+    ) {
       return null
     }
     if (enginesLoading || enginesFetching) {
@@ -1257,13 +1299,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       })
     }
     return null
-  }, [
-    effectiveTranslationEngineId,
-    enginesError,
-    enginesFetching,
-    enginesLoading,
-    selectedEngine,
-  ])
+  }, [effectiveTranslationEngineId, enginesError, enginesFetching, enginesLoading, selectedEngine])
   const selectedManagedLocalManifest = effectiveManagedLocalEngineId
     ? getManagedLocalTranslationEngineManifest(effectiveManagedLocalEngineId)
     : null
@@ -1565,17 +1601,18 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     targetLanguage: config?.translation?.targetLanguage ?? DEFAULT_TRANSLATION_TARGET_LANGUAGE,
     displayMode: config?.translation?.displayMode ?? DEFAULT_TRANSLATION_DISPLAY_MODE,
     cacheEnabled: config?.translation?.cacheEnabled ?? DEFAULT_TRANSLATION_CACHE_ENABLED,
-    engineId: config?.translation?.engineId ?? 'browser',
+    engineId: resolvedTranslationConfig?.engineId ?? 'browser',
   }
   const savedTranslationCacheEntryLimit =
     globalSettings?.translationCache?.entryLimit ?? DEFAULT_TRANSLATION_CACHE_ENTRY_LIMIT
   const isSaving =
-    savedTranslationConfig.enabled !== translationEnabled ||
-    savedTranslationConfig.targetLanguage !== translationTargetLanguage ||
-    savedTranslationConfig.displayMode !== translationDisplayMode ||
-    savedTranslationConfig.cacheEnabled !== translationCacheEnabled ||
-    savedTranslationConfig.engineId !== effectiveTranslationEngineId ||
-    savedTranslationCacheEntryLimit !== translationCacheEntryLimit
+    engineConfigReady &&
+    (savedTranslationConfig.enabled !== translationEnabled ||
+      savedTranslationConfig.targetLanguage !== translationTargetLanguage ||
+      savedTranslationConfig.displayMode !== translationDisplayMode ||
+      savedTranslationConfig.cacheEnabled !== translationCacheEnabled ||
+      savedTranslationConfig.engineId !== effectiveTranslationEngineId ||
+      savedTranslationCacheEntryLimit !== translationCacheEntryLimit)
 
   useEffect(() => {
     if (!effectiveTranslationEngineId || effectiveTranslationEngineId === 'browser') {
@@ -1684,7 +1721,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                       value={effectiveTranslationEngineId}
                       onValueChange={(engineId) => {
                         setTranslationEngineId(engineId)
-                        saveTranslationConfigMutation.mutate({ engineId })
+                        saveTranslationEngineMutation.mutate(engineId)
                         if (engineId === 'browser' && !inStaticMode) {
                           const cached = getBrowserSupportTableState(translationTargetLanguage)
                           if (cached) {
@@ -1701,7 +1738,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                       options={engineOptions}
                       ariaLabel="Engine"
                       className="min-w-[12rem]"
-                      disabled={saveTranslationConfigMutation.isPending || inStaticMode}
+                      disabled={
+                        !engineConfigReady ||
+                        saveTranslationEngineMutation.isPending ||
+                        inStaticMode
+                      }
                     />
                   ) : (
                     <button
@@ -1710,7 +1751,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                       className="border-border bg-background text-muted-foreground inline-flex h-9 min-w-[12rem] items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
                       disabled
                     >
-                      <span>{configLoading ? 'Loading engine...' : 'Select engine'}</span>
+                      <span>
+                        {configLoading || configPresenceLoading || globalSettingsLoading
+                          ? 'Loading engine...'
+                          : 'Select engine'}
+                      </span>
                       <ChevronDown className="h-4 w-4 shrink-0" />
                     </button>
                   )}
@@ -2102,17 +2147,9 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                         requestedSelectedGroupId: preferredLocalSelectedGroupId,
                       })
                       lastLocalPanelStateRef.current = panelState
-                      saveGlobalSettingsMutation.mutate({
-                        translationEngines: createManagedLocalGlobalSettingsPatch(
-                          effectiveManagedLocalEngineId,
-                          { model, selectedGroupId: null }
-                        ),
-                      })
-                      saveTranslationConfigMutation.mutate({
-                        engines: createManagedLocalProjectSettingsPatch(
-                          effectiveManagedLocalEngineId,
-                          { model, selectedGroupId: null }
-                        ),
+                      saveManagedLocalSelectionSettings(effectiveManagedLocalEngineId, {
+                        model,
+                        selectedGroupId: null,
                       })
                       setNmtSelectedGroupId(panelState.selectedGroupId)
                     }}
@@ -2129,17 +2166,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                   disabled={nmtGroupSelectionDisabled}
                   onSelectGroup={(groupId) => {
                     setNmtSelectedGroupId(groupId)
-                    saveGlobalSettingsMutation.mutate({
-                      translationEngines: createManagedLocalGlobalSettingsPatch(
-                        effectiveManagedLocalEngineId,
-                        { selectedGroupId: groupId }
-                      ),
-                    })
-                    saveTranslationConfigMutation.mutate({
-                      engines: createManagedLocalProjectSettingsPatch(
-                        effectiveManagedLocalEngineId,
-                        { selectedGroupId: groupId }
-                      ),
+                    saveManagedLocalSelectionSettings(effectiveManagedLocalEngineId, {
+                      selectedGroupId: groupId,
                     })
                   }}
                 />
@@ -2607,7 +2635,7 @@ function TranslationTestDialog({
                     ? 'Uses the configured OpenAI-compatible provider and model.'
                     : 'Uses the current browser Translator API capability.'}
           </p>
-          <div className="flex flex-wrap items-end justify-start gap-2 @[42rem]:justify-end">
+          <div className="@[42rem]:justify-end flex flex-wrap items-end justify-start gap-2">
             <label className="flex items-center gap-2 text-sm font-medium">
               <span>Timeout (seconds)</span>
               <input
@@ -2638,7 +2666,7 @@ function TranslationTestDialog({
         </div>
       }
     >
-      <div className="grid gap-4 @[64rem]:grid-cols-2">
+      <div className="@[64rem]:grid-cols-2 grid gap-4">
         <section className="bg-muted/20 border-border flex min-h-[23rem] flex-col rounded-xl border">
           <div className="border-border space-y-2 border-b px-4 py-4">
             <div className="text-foreground text-sm font-medium">Source Language</div>

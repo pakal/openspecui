@@ -1,11 +1,17 @@
-import type { DocumentTranslationConfigInput, OpenSpecUIGlobalSettings } from '@openspecui/core'
+import type {
+  DocumentTranslationConfigInput,
+  OpenSpecUIConfigPresence,
+  OpenSpecUIGlobalSettings,
+} from '@openspecui/core'
 
 export function resolveDocumentTranslationConfig(
   translationConfig: DocumentTranslationConfigInput | undefined,
-  globalSettings: OpenSpecUIGlobalSettings | undefined
+  globalSettings: OpenSpecUIGlobalSettings | undefined,
+  configPresence?: OpenSpecUIConfigPresence
 ): DocumentTranslationConfigInput | undefined {
   if (!translationConfig) return undefined
 
+  const projectOwnsEngineId = configPresence?.translation.engineId ?? true
   const local = translationConfig.engines?.local ?? {}
   const localCt2 = translationConfig.engines?.localCt2 ?? {}
   const localLlama = translationConfig.engines?.localLlama ?? {}
@@ -25,6 +31,9 @@ export function resolveDocumentTranslationConfig(
 
   return {
     ...translationConfig,
+    engineId: projectOwnsEngineId
+      ? translationConfig.engineId
+      : (globalSettings?.translationEngines.engineId ?? translationConfig.engineId),
     engines: {
       local: {
         ...local,

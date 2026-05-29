@@ -61,11 +61,13 @@ function createLocalModelCatalogItemForTest(
 
 const {
   useConfigSubscriptionMock,
+  useConfigPresenceSubscriptionMock,
   useGlobalSettingsSubscriptionMock,
   staticModeMock,
   useServerStatusMock,
 } = vi.hoisted(() => ({
   useConfigSubscriptionMock: vi.fn(),
+  useConfigPresenceSubscriptionMock: vi.fn(),
   useGlobalSettingsSubscriptionMock: vi.fn(),
   staticModeMock: vi.fn(() => false),
   useServerStatusMock: vi.fn(),
@@ -624,6 +626,7 @@ const {
     getLifecycle: vi.fn(),
     install: vi.fn(),
     installStream: vi.fn(),
+    select: vi.fn(),
   }
   const localModelsMock = {
     listLocal: vi.fn(),
@@ -2204,6 +2207,7 @@ vi.mock('@/lib/use-server-status', () => ({
 
 vi.mock('@/lib/use-subscription', () => ({
   useConfigSubscription: () => useConfigSubscriptionMock(),
+  useConfigPresenceSubscription: () => useConfigPresenceSubscriptionMock(),
   useGlobalSettingsSubscription: () => useGlobalSettingsSubscriptionMock(),
 }))
 
@@ -2435,6 +2439,9 @@ vi.mock('@/lib/trpc', () => ({
       batchTranslate: {
         subscribe: translationEnginesMock.batchTranslate,
       },
+      select: {
+        mutate: translationEnginesMock.select,
+      },
     },
     localModels: {
       listLocal: {
@@ -2563,10 +2570,51 @@ describe('Settings', () => {
     vi.useRealTimers()
   })
   beforeEach(() => {
+    useConfigPresenceSubscriptionMock.mockImplementation(() => {
+      const config = useConfigSubscriptionMock().data as
+        | {
+            translation?: {
+              engineId?: unknown
+              engines?: {
+                local?: unknown
+                localCt2?: unknown
+                localLlama?: unknown
+                openai?: unknown
+              }
+            }
+          }
+        | undefined
+      return {
+        data: {
+          translation: {
+            engineId:
+              config?.translation !== undefined &&
+              Object.prototype.hasOwnProperty.call(config.translation, 'engineId'),
+            engines: {
+              local:
+                config?.translation?.engines !== undefined &&
+                Object.prototype.hasOwnProperty.call(config.translation.engines, 'local'),
+              localCt2:
+                config?.translation?.engines !== undefined &&
+                Object.prototype.hasOwnProperty.call(config.translation.engines, 'localCt2'),
+              localLlama:
+                config?.translation?.engines !== undefined &&
+                Object.prototype.hasOwnProperty.call(config.translation.engines, 'localLlama'),
+              openai:
+                config?.translation?.engines !== undefined &&
+                Object.prototype.hasOwnProperty.call(config.translation.engines, 'openai'),
+            },
+          },
+        },
+        isLoading: false,
+        error: null,
+      }
+    })
     useGlobalSettingsSubscriptionMock.mockReturnValue({
       data: {
         translationCache: { entryLimit: 10000 },
         translationEngines: {
+          engineId: 'browser',
           extensions: {
             engines: {
               local: { status: 'not-installed' },
@@ -2694,7 +2742,7 @@ describe('Settings', () => {
     fireEvent.click(browserOption)
 
     await waitFor(() =>
-      expect(updateConfigMock).toHaveBeenCalledWith({ translation: { engineId: 'browser' } })
+      expect(translationEnginesMock.select).toHaveBeenCalledWith({ engineId: 'browser' })
     )
     await waitFor(() =>
       expect(browserTranslationMock.scan).toHaveBeenCalledWith('zh', expect.any(Object))
@@ -4081,12 +4129,93 @@ describe('Settings', () => {
         modelId: 'onnx-community/opus-mt-en-zh',
       })
     )
-    expect(updateGlobalSettingsMock).toHaveBeenCalledWith({
+    expect(updateConfigMock).toHaveBeenCalledWith({
+      translation: {
+        engines: {
+          local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
+        },
+      },
+    })
+    expect(updateGlobalSettingsMock).not.toHaveBeenCalledWith({
       translationEngines: {
         local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
       },
     })
-    expect(updateConfigMock).toHaveBeenCalledWith({
+  })
+
+  it('persists Local model commits globally when the project has no engine override', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn(() => ({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }))
+    )
+    useGlobalSettingsSubscriptionMock.mockReturnValue({
+      data: {
+        translationCache: { entryLimit: 10000 },
+        translationEngines: {
+          engineId: 'local',
+          extensions: {
+            engines: {
+              local: { status: 'not-installed' },
+              localCt2: { status: 'not-installed' },
+              localLlama: { status: 'not-installed' },
+              openai: { status: 'not-installed' },
+            },
+          },
+          openai: { baseUrl: '', token: '', model: 'gpt-4.1-mini' },
+          local: { model: 'Xenova/opus-mt-no-de', selectedGroupId: 'q8', hfEndpoint: '' },
+          localCt2: {
+            model: 'ooeoeo/opus-mt-en-zh-ct2-float16',
+            selectedGroupId: 'float16',
+            hfEndpoint: '',
+          },
+          localLlama: {
+            model: 'tencent/Hy-MT2-1.8B-1.25Bit-GGUF',
+            selectedGroupId: 'Hy-MT2-1.8B-1.25Bit-Q4_K_M.gguf',
+            hfEndpoint: '',
+          },
+        },
+      },
+      isLoading: false,
+      error: null,
+    })
+    useConfigSubscriptionMock.mockReturnValue({
+      data: {
+        translation: {
+          enabled: true,
+          targetLanguage: 'zh',
+          displayMode: 'direct',
+          cacheEnabled: false,
+        },
+      },
+    })
+    useServerStatusMock.mockReturnValue({ projectDir: '/tmp/project' })
+
+    render(<Settings />)
+
+    await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
+    fireEvent.click(screen.getByRole('button', { name: 'Local Model' }))
+    dispatchPopoverToggle(screen.getByRole('dialog', { name: 'Select local model' }), 'open')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search local models' }), {
+      target: { value: 'opus' },
+    })
+    fireEvent.click(
+      await screen.findByRole('option', {
+        name: /onnx-community\/opus-mt-en-zh/,
+      })
+    )
+
+    await waitFor(() =>
+      expect(updateGlobalSettingsMock).toHaveBeenCalledWith({
+        translationEngines: {
+          local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
+        },
+      })
+    )
+    expect(updateConfigMock).not.toHaveBeenCalledWith({
       translation: {
         engines: {
           local: { model: 'onnx-community/opus-mt-en-zh', selectedGroupId: null },
@@ -4130,11 +4259,11 @@ describe('Settings', () => {
     const profileList = await screen.findByLabelText('Local download profiles')
     fireEvent.click(within(profileList).getByRole('button', { name: /^fp16/i }))
 
-    expect(updateGlobalSettingsMock).toHaveBeenCalledWith({
-      translationEngines: { local: { selectedGroupId: 'fp16' } },
-    })
     expect(updateConfigMock).toHaveBeenCalledWith({
       translation: { engines: { local: { selectedGroupId: 'fp16' } } },
+    })
+    expect(updateGlobalSettingsMock).not.toHaveBeenCalledWith({
+      translationEngines: { local: { selectedGroupId: 'fp16' } },
     })
   })
 
@@ -4167,9 +4296,9 @@ describe('Settings', () => {
     dispatchPopoverToggle(screen.getByRole('dialog', { name: 'Local provider settings' }), 'open')
     const endpointHint = screen.getByText(/Current endpoint:/)
     const memoryLabel = screen.getByText('Max memory budget')
-    expect(endpointHint.compareDocumentPosition(memoryLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    )
+    expect(
+      endpointHint.compareDocumentPosition(memoryLabel) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
     const endpointInput = screen.getByLabelText('HF Endpoint')
     fireEvent.change(endpointInput, { target: { value: 'https://hf-mirror.com' } })
     fireEvent.keyDown(endpointInput, { key: 'Enter' })

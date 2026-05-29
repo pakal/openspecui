@@ -36,7 +36,7 @@ import {
 import { observable } from '@trpc/server/observable'
 import { spawn } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
-import { totalmem } from 'node:os'
+import { freemem, totalmem } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -76,6 +76,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 type TranslationEngineSettingsSnapshot = Awaited<ReturnType<GlobalSettingsManager['readSettings']>>
 type TranslationConfigSnapshot = Awaited<ReturnType<ConfigManager['readConfig']>>
+type TranslationConfigPresenceSnapshot = Awaited<ReturnType<ConfigManager['readConfigPresence']>>
 
 export interface TranslationEngineListItem extends TranslationEngineManifest {
   selected: boolean
@@ -101,6 +102,7 @@ export interface TranslationEngineServiceOptions {
   executeManagedLocalBatchTranslate?: (
     input: ManagedLocalBatchTranslateInput
   ) => AsyncGenerator<BatchTranslateEvent>
+  readRuntimeMemory?: () => TranslationRuntimeMemorySnapshot
 }
 
 interface ManagedLocalBatchTranslateInput {
@@ -118,6 +120,13 @@ interface ManagedLocalBatchTranslateInput {
   signal: AbortSignal
 }
 
+interface TranslationRuntimeMemorySnapshot {
+  totalMemoryMb?: number
+  availableMemoryMb?: number
+  platform?: NodeJS.Platform
+  arch?: string
+}
+
 export class TranslationEngineService {
   private readonly projectDir: string
   private readonly configManager: ConfigManager
@@ -132,6 +141,7 @@ export class TranslationEngineService {
   private readonly executeManagedLocalBatchTranslate: (
     input: ManagedLocalBatchTranslateInput
   ) => AsyncGenerator<BatchTranslateEvent>
+  private readonly readRuntimeMemory: () => TranslationRuntimeMemorySnapshot
   private readonly managedLocalRuntimeCompatibilityCache = new Map<
     string,
     TranslationEngineLifecycleStatus['assets']
@@ -158,6 +168,7 @@ export class TranslationEngineService {
     this.executeManagedLocalBatchTranslate =
       options.executeManagedLocalBatchTranslate ??
       ((input) => this.executeManagedLocalBatchTranslateDirect(input))
+    this.readRuntimeMemory = options.readRuntimeMemory ?? readCurrentRuntimeMemory
     new LocalModelFetchCacheStore({
       cachePath: options.localFetchCachePath ?? getDefaultLocalModelFetchCachePath(),
       now: this.now,
@@ -173,10 +184,16 @@ export class TranslationEngineService {
   }
 
   async listEngines(): Promise<TranslationEngineListItem[]> {
-    const [config, globalSettings] = await Promise.all([
+    const [config, configPresence, globalSettings] = await Promise.all([
       this.configManager.readConfig(),
+      this.configManager.readConfigPresence(),
       this.globalSettingsManager.readSettings(),
     ])
+    const effectiveEngineId = resolveEffectiveTranslationEngineId(
+      config,
+      configPresence,
+      globalSettings
+    )
     const items = await Promise.all(
       TRANSLATION_ENGINE_MANIFESTS.map(async (manifest) => {
         const lifecycle = await this.getLifecycle(manifest.id, {
@@ -185,7 +202,7 @@ export class TranslationEngineService {
         })
         return {
           ...manifest,
-          selected: config.translation.engineId === manifest.id,
+          selected: effectiveEngineId === manifest.id,
           lifecycle,
           message:
             getTranslationEngineLifecycleMessage(lifecycle) ??
@@ -352,7 +369,12 @@ export class TranslationEngineService {
   }
 
   async selectEngine(engineId: TranslationEngineId): Promise<{ success: true }> {
-    await this.configManager.writeConfig({ translation: { engineId } })
+    const configPresence = await this.configManager.readConfigPresence()
+    if (configPresence.translation.engineId) {
+      await this.configManager.writeConfig({ translation: { engineId } })
+    } else {
+      await this.globalSettingsManager.writeSettings({ translationEngines: { engineId } })
+    }
     return { success: true }
   }
 
@@ -612,17 +634,25 @@ export class TranslationEngineService {
     runtimeConfig: Record<string, unknown>
     workerResourceLimits?: TranslationWorkerResourceLimits
   }> {
-    const strategy = resolveManagedLocalRuntimeStrategy({
-      engineId,
-      globalSettings,
-      totalMemoryMb: readProcessTotalMemoryMb(),
-    })
     const plan = await this.getModelDownloadPlan({
       engineId,
       model,
       selectedGroupId,
     })
     const selectedGroup = selectLocalPlanGroup(plan, selectedGroupId)
+    const runtimeMemory = this.readRuntimeMemory()
+    const strategy = resolveManagedLocalRuntimeStrategy({
+      engineId,
+      globalSettings,
+      totalMemoryMb: runtimeMemory.totalMemoryMb,
+      availableMemoryMb: runtimeMemory.availableMemoryMb,
+      platform: runtimeMemory.platform,
+      arch: runtimeMemory.arch,
+      modelSizeBytes: selectedGroup?.estimatedTotalBytes ?? plan?.estimatedTotalBytes,
+    })
+    if (strategy.rejection) {
+      throw new Error(strategy.rejection.reason)
+    }
     if (engineId === 'local-llama') {
       const ggufPath =
         selectedGroup?.rootDir && selectedGroup.files[0]?.path
@@ -887,6 +917,7 @@ const browserTranslationEngineLifecycleController: TranslationEngineLifecycleCon
     return browserTranslationEngineLifecycleController.detectLifecycle({
       projectDir: '',
       globalSettings: {
+        engineId: 'browser',
         local: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         localCt2: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         localLlama: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
@@ -917,6 +948,7 @@ const openAITranslationEngineLifecycleController: TranslationEngineLifecycleCont
     return openAITranslationEngineLifecycleController.detectLifecycle({
       projectDir: '',
       globalSettings: {
+        engineId: 'browser',
         local: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         localCt2: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         localLlama: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
@@ -962,6 +994,16 @@ function resolveEngineModel(
     return config.translation.engines.openai.model ?? globalSettings.translationEngines.openai.model
   }
   return undefined
+}
+
+function resolveEffectiveTranslationEngineId(
+  config: TranslationConfigSnapshot,
+  configPresence: TranslationConfigPresenceSnapshot,
+  globalSettings: TranslationEngineSettingsSnapshot
+): TranslationEngineId {
+  return configPresence.translation.engineId
+    ? config.translation.engineId
+    : globalSettings.translationEngines.engineId
 }
 
 function resolveManagedLocalSelection(
@@ -1436,4 +1478,21 @@ function readProcessTotalMemoryMb(): number | undefined {
     return Math.round(value / (1024 * 1024))
   }
   return undefined
+}
+
+function readProcessAvailableMemoryMb(): number | undefined {
+  const value = freemem()
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value / (1024 * 1024))
+  }
+  return undefined
+}
+
+function readCurrentRuntimeMemory(): TranslationRuntimeMemorySnapshot {
+  return {
+    totalMemoryMb: readProcessTotalMemoryMb(),
+    availableMemoryMb: readProcessAvailableMemoryMb(),
+    platform: process.platform,
+    arch: process.arch,
+  }
 }

@@ -200,6 +200,7 @@ export {
   type DashboardConfig,
   type GitConfig,
   type OpenSpecUIConfig,
+  type OpenSpecUIConfigPresence,
   type OpenSpecUIConfigUpdate,
   type OpsxAgentInvocationMode,
   type OpsxConfig,
