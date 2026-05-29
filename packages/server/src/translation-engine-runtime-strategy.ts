@@ -7,6 +7,7 @@ export interface TranslationWorkerResourceLimits {
   maxOldGenerationSizeMb?: number
   maxYoungGenerationSizeMb?: number
   codeRangeSizeMb?: number
+  maxRssMb?: number
 }
 
 export interface TranslationEngineWorkerPolicy {
@@ -175,6 +176,7 @@ function createWorkerPolicy(workerBudgetMb: number): TranslationEngineWorkerPoli
       maxOldGenerationSizeMb: oldSpace,
       maxYoungGenerationSizeMb: youngSpace,
       codeRangeSizeMb: DEFAULT_CODE_RANGE_MB,
+      maxRssMb: workerBudgetMb,
     },
   }
 }

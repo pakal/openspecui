@@ -225,6 +225,9 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
           ? llamaModelCacheDir
           : nmtModelCacheDir
     },
+    resolveHost(input) {
+      return input.engineId === 'local-llama' ? 'process' : 'thread'
+    },
   })
   const translationEngineService = new TranslationEngineService({
     projectDir: config.projectDir,

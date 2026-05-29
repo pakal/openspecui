@@ -589,6 +589,7 @@ describe('TranslationEngineService', () => {
         maxOldGenerationSizeMb: 256,
         maxYoungGenerationSizeMb: 64,
         codeRangeSizeMb: 128,
+        maxRssMb: 256,
       },
     })
   })
