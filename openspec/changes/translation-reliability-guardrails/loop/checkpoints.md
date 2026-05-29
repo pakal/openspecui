@@ -72,3 +72,22 @@
   - `pnpm --filter @openspecui/server typecheck`
   - `pnpm --filter @openspecui/server build`
   - `git diff --check`
+- 2026-05-29 runtime budget follow-up scoped checks passed:
+  - BDD red state reproduced Apple Silicon 50% budget collapsing to `0MB` when `availableMemoryMb` was below the OS reserve
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-runtime-strategy.test.ts`
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-runtime-strategy.test.ts src/translation-engine-service.test.ts src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/server typecheck`
+  - `pnpm --filter @openspecui/server build`
+  - `git diff --check`
+- 2026-05-29 translation settings ownership follow-up scoped checks passed:
+  - BDD red state reproduced managed-local lifecycle probing local-llama runtime compatibility during `getLifecycle()`
+  - BDD red state reproduced scalar translation preference writes still targeting project config by default
+  - BDD red state reproduced OpenAI model writes still double-writing project/global and reading only global model state
+  - `pnpm --filter @openspecui/core exec vitest run src/config.test.ts src/global-settings.test.ts src/translator.test.ts`
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-runtime-strategy.test.ts src/translation-engine-service.test.ts src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/web exec vitest run --project unit src/lib/resolve-document-translation-config.test.ts src/routes/settings.test.tsx`
+  - `pnpm --filter @openspecui/web exec tsc --noEmit`
+  - `pnpm --filter @openspecui/server typecheck`
+  - `pnpm --filter @openspecui/server build`
+  - `pnpm --filter @openspecui/core typecheck`
+  - `git diff --check`

@@ -128,6 +128,48 @@
   - second invocation after a failed batch creating a fresh child process.
 - Keep the process host per-batch in this follow-up; do not silently introduce a persistent daemon or restart loop without a separate design.
 
+## Follow-up Finding: Unified-Memory Budget Collapse
+
+- The current local-llama preflight computes `budgetMemoryMb` as the minimum of:
+  - the user-intent quota from `totalMemoryMb * memoryBudgetPercent`,
+  - and `availableMemoryMb - osReservedMb`.
+- `availableMemoryMb` currently comes from `os.freemem()`.
+- On Apple Silicon/unified memory, `os.freemem()` is transient and can be very low because memory is cached, compressed, or under pressure; it is not a reliable hard capacity signal for deciding whether a user-selected 50% budget is effectively 0%.
+- This causes false rejections such as a 50% budget yielding `0.01GB`.
+- The runtime already has a process RSS watchdog based on the intent-derived budget, so preflight should reject against the intent budget while runtime enforces the actual process ceiling.
+
+## Follow-up Plan: Stable Local-Llama Budget Derivation
+
+- Keep `memoryBudgetPercent` anchored to total/constrained memory.
+- For Apple Silicon/unified memory:
+  - compute the safe budget from total memory and OS reserve,
+  - do not use transient `os.freemem()` as a hard cap in preflight.
+- For non-unified memory, continue using available-memory telemetry conservatively because VRAM/RAM pressure behaves differently and process fallback can still be dangerous.
+- Add a BDD regression test proving a 50% unified-memory budget does not collapse to zero when `availableMemoryMb` is below the reserve.
+- Update the existing rejection test to assert rejection still happens when model requirements exceed the stable intent-derived budget.
+
+## Follow-up Finding: Automatic Engine Probe and Translation Ownership Gaps
+
+- Switching the Settings engine calls `translationEngines.select`, then refetches `translationEngines.list`.
+- `listEngines()` calls `getLifecycle()` for every engine.
+- Managed-local `getLifecycle()` calls `detectManagedLocalLifecycle()`, and when dependencies are installed it calls `probeManagedLocalRuntime()`.
+- That runtime probe imports the native/runtime package on selection/list refresh, so switching engines can still perform an implicit runtime test before the user opens Test Translate.
+- Current project/global ownership is only complete for `translation.engineId`.
+- `translation.enabled`, `translation.targetLanguage`, `translation.displayMode`, and `translation.cacheEnabled` are read from project config and written through `config.update` by default.
+- Settings UI also writes OpenAI model to both global and project, and managed-local model selection uses `translation.engineId` ownership rather than the related `translation.engines.*` ownership.
+
+## Follow-up Plan: Manual Test Translate and Global Translation Defaults
+
+- Stop managed-local lifecycle detection after dependency detection; runtime validation becomes `not-applicable` until the user runs Test Translate.
+- Add front-end copy near the engine selector/test button that tells users to run Test Translate for errors, latency, and runtime validation.
+- Add global translation settings for `enabled`, `targetLanguage`, `displayMode`, and `cacheEnabled`.
+- Extend config presence to track scalar `translation.*` fields, not only `engineId`.
+- Resolve effective document translation config as project override first, then global settings, then defaults for every scalar translation field.
+- Route Settings writes field-by-field:
+  - write project config only when that exact project field is present,
+  - otherwise write global settings.
+- Route `translation.engines.*` model/selected-group writes by the related engine settings presence, not by `translation.engineId`.
+
 ## Verification Strategy
 
 - Focused unit tests:

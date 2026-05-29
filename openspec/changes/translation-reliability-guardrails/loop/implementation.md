@@ -48,6 +48,15 @@
   - child-process `disconnect` and `close` are promoted into first-class failure signals alongside `error` and `exit`,
   - one idempotent reducer owns all abnormal process termination paths,
   - per-batch process hosting remains the current law, and the next batch invocation creates the replacement process host.
+- One runtime-budget correction is being applied after a false local-llama rejection:
+  - unified-memory budget preflight no longer treats transient `os.freemem()` as a hard budget cap,
+  - the user-selected percentage remains anchored to total/constrained memory,
+  - the process RSS watchdog remains the runtime enforcement boundary for the selected budget.
+- One translation-settings ownership correction is being applied after follow-up review:
+  - managed-local lifecycle checks no longer import/probe runtimes on engine selection,
+  - Settings prompts users to run Test Translate manually for errors and latency,
+  - scalar `translation.*` fields default to global settings with explicit project override support,
+  - model-selection writes use the related `translation.engines.*` ownership instead of `translation.engineId`.
 
 ## Loopback Triggers
 

@@ -117,3 +117,32 @@
 - Observed child-process failure SHALL be normalized into per-item runtime failures for every unsettled input, instead of leaving the parent generator hanging.
 - A failed process-host batch SHALL NOT poison future batches; the next invocation SHALL create a fresh child process.
 - This loop does not require a persistent engine daemon. In the current per-batch process-host law, "restart" means the next translation attempt starts a new process host automatically.
+
+## Runtime Budget Algorithm Follow-up User Input
+
+> 底层算法有问题：
+>
+> ```
+> Selected GGUF model is estimated to need 1.58GB, but the 50% memory budget only allows 0.01GB. Choose a smaller model, lower the memory budget risk by closing other apps, or raise the engine memory budget intentionally.
+> ```
+
+## Runtime Budget Algorithm Follow-up Acceptance Boundary
+
+- The memory-budget percentage SHALL remain an intent-level budget derived from total/constrained memory.
+- Apple Silicon/unified-memory budget calculation SHALL NOT treat transient `os.freemem()` as a hard cap that can collapse a 50% budget to near zero.
+- Local-llama preflight SHALL still reject models whose estimated requirement exceeds the intent-derived safe budget.
+- RSS watchdog limits SHALL continue to enforce the selected budget at process runtime.
+
+## Translation Settings Ownership Follow-up User Input
+
+> 1. 另外，取消一个默认行为：现在切换Engine后，会自动做Test 。取消这个行为，通过前端的改进，来提示用户自己来做 Test Translate。这样能看到异常、延迟 等详情。
+>
+> 2.  ` "translation": {    "enabled": true,    "cacheEnabled": true}` 这些配置默认不是project，属于global。和engineId字段一样，默认都是全局，但是不排除手动再project做配置。准确来说translation下的所有字段都是这样的行为。你看看还有什么遗漏的字段是默认写project，改成global。
+
+## Translation Settings Ownership Follow-up Acceptance Boundary
+
+- Switching translation engines SHALL NOT automatically run runtime/test probes that can hide errors, latency, or resource impact.
+- Settings UI SHALL prompt users to run Test Translate manually to validate errors and latency.
+- `translation.enabled`, `translation.targetLanguage`, `translation.displayMode`, `translation.cacheEnabled`, and `translation.engineId` SHALL default to global settings.
+- Project-level `translation.*` overrides SHALL remain supported when the project config explicitly contains the related field.
+- Managed local and OpenAI model-selection fields under `translation.engines.*` SHALL default to global settings unless the project config explicitly owns the related engine settings.
