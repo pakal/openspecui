@@ -91,3 +91,10 @@
   - `pnpm --filter @openspecui/server build`
   - `pnpm --filter @openspecui/core typecheck`
   - `git diff --check`
+- 2026-05-29 translation engine metadata loading follow-up scoped checks passed:
+  - BDD red state reproduced Settings showing `Checking translation engine status.` while `translationEngines.list` was still resolving
+  - `pnpm --filter @openspecui/web exec vitest run --project unit src/routes/settings.test.tsx`
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-service.test.ts`
+  - `pnpm --filter @openspecui/web exec tsc --noEmit`
+  - `pnpm --filter @openspecui/server typecheck`
+  - `git diff --check`
