@@ -195,13 +195,22 @@ function resolveSafeRuntimeBudgetMb(input: {
 }): number {
   const quotaFromTotal = Math.round((input.totalMemoryMb * input.memoryBudgetPercent) / 100)
   const osReservedMb = input.isUnifiedMemory ? 3072 : 1536
+  const quotaWithOsReserve = Math.max(
+    0,
+    Math.min(quotaFromTotal, input.totalMemoryMb - osReservedMb)
+  )
+  // On unified-memory Macs, os.freemem() is transient and can exclude reclaimable memory.
+  // The RSS watchdog enforces the selected budget at runtime, so preflight uses intent budget.
+  if (input.isUnifiedMemory) {
+    return quotaWithOsReserve
+  }
   const quotaFromAvailable =
     typeof input.availableMemoryMb === 'number' &&
     Number.isFinite(input.availableMemoryMb) &&
     input.availableMemoryMb > 0
       ? Math.max(0, input.availableMemoryMb - osReservedMb)
-      : quotaFromTotal
-  return Math.max(0, Math.min(quotaFromTotal, quotaFromAvailable))
+      : quotaWithOsReserve
+  return Math.max(0, Math.min(quotaWithOsReserve, quotaFromAvailable))
 }
 
 function estimateLocalLlamaRequiredMemoryMb(input: {

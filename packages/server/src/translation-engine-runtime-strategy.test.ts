@@ -60,7 +60,21 @@ describe('translation engine runtime strategy', () => {
     })
 
     expect(plan.rejection?.reason).toContain('Selected GGUF model is estimated to need')
-    expect(plan.rejection?.budgetMemoryMb).toBe(1024)
-    expect(plan.rejection?.requiredMemoryMb).toBeGreaterThan(1024)
+    expect(plan.rejection?.budgetMemoryMb).toBe(2048)
+    expect(plan.rejection?.requiredMemoryMb).toBeGreaterThan(2048)
+  })
+
+  it('does not collapse Apple Silicon local-llama budget to transient free memory', () => {
+    const plan = resolveLocalLlamaRuntimePlan({
+      profile: 'balanced',
+      memoryBudgetPercent: 50,
+      totalMemoryMb: 16 * 1024,
+      availableMemoryMb: 128,
+      platform: 'darwin',
+      arch: 'arm64',
+      modelSizeBytes: 1024 * 1024 * 1024,
+    })
+
+    expect(plan.rejection).toBeUndefined()
   })
 })
