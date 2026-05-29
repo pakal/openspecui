@@ -105,6 +105,29 @@
 - Treat abnormal child process exit as `runtime` batch failure instead of a server crash.
 - Keep the first rollout focused on `local-llama`; do not force `local`/`local-ct2` to child processes unless evidence shows their native layers can abort the host.
 
+## Follow-up Finding: Process Lifecycle Observation Gap
+
+- The process host is currently per batch: each `batchTranslate()` invocation creates a child process, sends one request after `ready`, drains events, then shuts the child down.
+- Because the host is per batch, "auto restart" in this design means the next invocation creates a fresh process host. A persistent engine daemon with restart backoff is a larger platform law and is not implemented in this loop.
+- The first process-host implementation observes `message`, `error`, and `exit`, but it does not model IPC `disconnect` or process `close`.
+- A native/runtime crash can therefore detach IPC or close stdio without producing the exact path currently expected by the parent, leaving the async generator without a classified failure.
+- The process-host interface also does not expose `disconnect`/`close`, so tests cannot prove those lifecycle paths are handled.
+
+## Follow-up Plan: Process Lifecycle Failure Reducer
+
+- Extend the child-process adapter interface to include `disconnect` and `close` lifecycle events.
+- Route `error`, `exit`, `disconnect`, and `close` through one idempotent failure reducer that:
+  - stops the RSS watchdog,
+  - records that the process is no longer usable,
+  - emits one classified runtime failure for every unsettled input,
+  - ignores duplicate lifecycle events after completion.
+- Add BDD coverage for:
+  - IPC disconnect before completion,
+  - process close before completion,
+  - spawn/process error before ready,
+  - second invocation after a failed batch creating a fresh child process.
+- Keep the process host per-batch in this follow-up; do not silently introduce a persistent daemon or restart loop without a separate design.
+
 ## Verification Strategy
 
 - Focused unit tests:

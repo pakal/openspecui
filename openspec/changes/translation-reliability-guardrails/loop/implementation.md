@@ -44,6 +44,10 @@
   - native-crash-risk engines are moved from worker-thread isolation to process isolation,
   - local-llama uses the process host so native aborts become classified runtime failures instead of server process exits,
   - the same memory budget strategy feeds both JS heap limits and a process RSS watchdog.
+- One process lifecycle correction is being applied after a real process-host observation gap:
+  - child-process `disconnect` and `close` are promoted into first-class failure signals alongside `error` and `exit`,
+  - one idempotent reducer owns all abnormal process termination paths,
+  - per-batch process hosting remains the current law, and the next batch invocation creates the replacement process host.
 
 ## Loopback Triggers
 

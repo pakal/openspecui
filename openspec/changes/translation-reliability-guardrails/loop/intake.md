@@ -106,3 +106,14 @@
 - A native runtime abort or uncaught N-API/C++ exception SHALL surface as a classified translation runtime failure, not terminate the CLI/server process.
 - The process-isolated host SHALL still receive the engine memory budget policy.
 - The process-isolated host SHALL enforce a V8 heap limit and an RSS watchdog derived from the engine memory budget.
+
+## Process Lifecycle Follow-up User Input
+
+> 好像有点问题，子进程应该是死掉了，然后主进程似乎没有意识到这个问题。也没有自动重启
+
+## Process Lifecycle Follow-up Acceptance Boundary
+
+- If the managed local translation child process dies, disconnects, closes, or fails to spawn before completing a batch, the parent SHALL observe that lifecycle event.
+- Observed child-process failure SHALL be normalized into per-item runtime failures for every unsettled input, instead of leaving the parent generator hanging.
+- A failed process-host batch SHALL NOT poison future batches; the next invocation SHALL create a fresh child process.
+- This loop does not require a persistent engine daemon. In the current per-batch process-host law, "restart" means the next translation attempt starts a new process host automatically.

@@ -65,3 +65,10 @@
   - `pnpm --filter @openspecui/core exec vitest run src/translator.test.ts`
   - `pnpm --filter @openspecui/server build`
   - `git diff --check`
+- 2026-05-29 process lifecycle follow-up scoped checks passed:
+  - BDD red state reproduced `disconnect`/`close` parent-generator hangs in `packages/server/src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/server exec vitest run src/translation-engine-runtime-strategy.test.ts src/translation-engine-service.test.ts src/translation-engine-worker.test.ts`
+  - `pnpm --filter @openspecui/server typecheck`
+  - `pnpm --filter @openspecui/server build`
+  - `git diff --check`
