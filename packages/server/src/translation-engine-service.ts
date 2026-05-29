@@ -36,6 +36,7 @@ import {
 import { observable } from '@trpc/server/observable'
 import { spawn } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
+import { totalmem } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -65,6 +66,10 @@ import {
   readRuntimeHostPackageDependencyTree,
   resolveRuntimeHostPackageContext,
 } from './runtime-package-host.js'
+import {
+  resolveManagedLocalRuntimeStrategy,
+  type TranslationWorkerResourceLimits,
+} from './translation-engine-runtime-strategy.js'
 import { searchLocalModels } from './translation-model-catalog.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -93,6 +98,24 @@ export interface TranslationEngineServiceOptions {
   localLlamaCacheDir?: string
   localLlamaAssetIndexPath?: string
   localLlamaFetchCachePath?: string
+  executeManagedLocalBatchTranslate?: (
+    input: ManagedLocalBatchTranslateInput
+  ) => AsyncGenerator<BatchTranslateEvent>
+}
+
+interface ManagedLocalBatchTranslateInput {
+  engineId: ManagedLocalTranslationEngineId
+  sourceLanguage: string
+  targetLanguage: string
+  model: string | undefined
+  dtype: string | undefined
+  runtimeConfig: Record<string, unknown> | undefined
+  workerResourceLimits?: TranslationWorkerResourceLimits
+  inputs: string[]
+  instructions?: string
+  context?: string
+  timeoutMs?: number
+  signal: AbortSignal
 }
 
 export class TranslationEngineService {
@@ -106,6 +129,9 @@ export class TranslationEngineService {
   private readonly localAssetStore: LocalModelAssetStore
   private readonly localCt2AssetStore: LocalModelAssetStore
   private readonly localLlamaAssetStore: LocalModelAssetStore
+  private readonly executeManagedLocalBatchTranslate: (
+    input: ManagedLocalBatchTranslateInput
+  ) => AsyncGenerator<BatchTranslateEvent>
   private readonly managedLocalRuntimeCompatibilityCache = new Map<
     string,
     TranslationEngineLifecycleStatus['assets']
@@ -129,6 +155,9 @@ export class TranslationEngineService {
     this.localLlamaAssetStore = new LocalModelAssetStore({
       indexPath: options.localLlamaAssetIndexPath ?? getDefaultLocalLlamaModelIndexPath(),
     })
+    this.executeManagedLocalBatchTranslate =
+      options.executeManagedLocalBatchTranslate ??
+      ((input) => this.executeManagedLocalBatchTranslateDirect(input))
     new LocalModelFetchCacheStore({
       cachePath: options.localFetchCachePath ?? getDefaultLocalModelFetchCachePath(),
       now: this.now,
@@ -377,21 +406,43 @@ export class TranslationEngineService {
               effectiveSelectedGroupId
             )
           }
-          const runtimeConfig =
+          const runtimePlan =
             isManagedLocalTranslationEngineId(input.engineId) && effectiveModel
-              ? await this.readManagedLocalRuntimeConfig(
+              ? await this.readManagedLocalRuntimePlan(
                   input.engineId,
                   effectiveModel,
-                  effectiveSelectedGroupId
+                  effectiveSelectedGroupId,
+                  settingsSnapshot.translationEngines
                 )
               : undefined
+          if (isManagedLocalTranslationEngineId(input.engineId)) {
+            for await (const event of this.executeManagedLocalBatchTranslate({
+              engineId: input.engineId,
+              sourceLanguage: input.sourceLanguage,
+              targetLanguage: input.targetLanguage,
+              model: effectiveModel,
+              dtype,
+              runtimeConfig: runtimePlan?.runtimeConfig,
+              workerResourceLimits: runtimePlan?.workerResourceLimits,
+              inputs: input.inputs,
+              instructions: input.instructions,
+              context: input.context,
+              timeoutMs: input.timeoutMs,
+              signal: controller.signal,
+            })) {
+              emit.next(event)
+            }
+            emit.complete()
+            return
+          }
+
           const factory = await this.loadFactory(input.engineId, effectiveModel, settingsSnapshot)
           const translator = await factory.create({
             sourceLanguage: input.sourceLanguage,
             targetLanguage: input.targetLanguage,
             model: effectiveModel,
             dtype,
-            runtimeConfig,
+            runtimeConfig: runtimePlan?.runtimeConfig,
             signal: controller.signal,
           })
           try {
@@ -399,6 +450,7 @@ export class TranslationEngineService {
               instructions: input.instructions,
               context: input.context,
               signal: controller.signal,
+              timeoutMs: input.timeoutMs,
             })) {
               emit.next(event)
             }
@@ -551,11 +603,20 @@ export class TranslationEngineService {
     }
   }
 
-  private async readManagedLocalRuntimeConfig(
+  private async readManagedLocalRuntimePlan(
     engineId: ManagedLocalTranslationEngineId,
     model: string,
-    selectedGroupId?: string
-  ): Promise<Record<string, unknown> | undefined> {
+    selectedGroupId: string | undefined,
+    globalSettings: TranslationEngineSettingsSnapshot['translationEngines']
+  ): Promise<{
+    runtimeConfig: Record<string, unknown>
+    workerResourceLimits?: TranslationWorkerResourceLimits
+  }> {
+    const strategy = resolveManagedLocalRuntimeStrategy({
+      engineId,
+      globalSettings,
+      totalMemoryMb: readProcessTotalMemoryMb(),
+    })
     const plan = await this.getModelDownloadPlan({
       engineId,
       model,
@@ -567,7 +628,12 @@ export class TranslationEngineService {
         selectedGroup?.rootDir && selectedGroup.files[0]?.path
           ? join(selectedGroup.rootDir, selectedGroup.files[0].path)
           : selectedGroup?.rootDir
-      return ggufPath ? { modelPath: ggufPath } : undefined
+      return {
+        runtimeConfig: ggufPath
+          ? { ...strategy.runtimeConfig, modelPath: ggufPath }
+          : strategy.runtimeConfig,
+        workerResourceLimits: strategy.worker.resourceLimits,
+      }
     }
     const configPath = selectedGroup?.rootDir
       ? join(selectedGroup.rootDir, 'config.json')
@@ -583,14 +649,33 @@ export class TranslationEngineService {
         unknown
       >
       if (engineId === 'local-ct2' && selectedGroup?.rootDir) {
-        return { ...runtimeConfig, modelPath: selectedGroup.rootDir }
+        return {
+          runtimeConfig: {
+            ...runtimeConfig,
+            ...strategy.runtimeConfig,
+            modelPath: selectedGroup.rootDir,
+          },
+          workerResourceLimits: strategy.worker.resourceLimits,
+        }
       }
-      return runtimeConfig
+      return {
+        runtimeConfig: {
+          ...runtimeConfig,
+          ...strategy.runtimeConfig,
+        },
+        workerResourceLimits: strategy.worker.resourceLimits,
+      }
     } catch {
       if (engineId === 'local-ct2' && selectedGroup?.rootDir) {
-        return { modelPath: selectedGroup.rootDir }
+        return {
+          runtimeConfig: { ...strategy.runtimeConfig, modelPath: selectedGroup.rootDir },
+          workerResourceLimits: strategy.worker.resourceLimits,
+        }
       }
-      return undefined
+      return {
+        runtimeConfig: strategy.runtimeConfig,
+        workerResourceLimits: strategy.worker.resourceLimits,
+      }
     }
   }
 
@@ -664,6 +749,33 @@ export class TranslationEngineService {
       token: globalSettings.translationEngines.openai.token,
       model: model ?? globalSettings.translationEngines.openai.model,
     })
+  }
+
+  private async *executeManagedLocalBatchTranslateDirect(
+    input: ManagedLocalBatchTranslateInput
+  ): AsyncGenerator<BatchTranslateEvent> {
+    const settingsSnapshot = await this.globalSettingsManager.readSettings()
+    const factory = await this.loadFactory(input.engineId, input.model, settingsSnapshot)
+    const translator = await factory.create({
+      sourceLanguage: input.sourceLanguage,
+      targetLanguage: input.targetLanguage,
+      model: input.model,
+      dtype: input.dtype,
+      runtimeConfig: input.runtimeConfig,
+      signal: input.signal,
+    })
+    try {
+      for await (const event of translator.batchTranslate(input.inputs, {
+        instructions: input.instructions,
+        context: input.context,
+        signal: input.signal,
+        timeoutMs: input.timeoutMs,
+      })) {
+        yield event
+      }
+    } finally {
+      translator.destroy?.()
+    }
   }
 
   private async readManagedLocalAssetLifecycle(
@@ -775,9 +887,9 @@ const browserTranslationEngineLifecycleController: TranslationEngineLifecycleCon
     return browserTranslationEngineLifecycleController.detectLifecycle({
       projectDir: '',
       globalSettings: {
-        local: { model: '', hfEndpoint: '' },
-        localCt2: { model: '', hfEndpoint: '' },
-        localLlama: { model: '', hfEndpoint: '' },
+        local: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
+        localCt2: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
+        localLlama: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         openai: { baseUrl: '', token: '', model: '' },
       },
     })
@@ -805,9 +917,9 @@ const openAITranslationEngineLifecycleController: TranslationEngineLifecycleCont
     return openAITranslationEngineLifecycleController.detectLifecycle({
       projectDir: '',
       globalSettings: {
-        local: { model: '', hfEndpoint: '' },
-        localCt2: { model: '', hfEndpoint: '' },
-        localLlama: { model: '', hfEndpoint: '' },
+        local: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
+        localCt2: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
+        localLlama: { model: '', hfEndpoint: '', memoryBudgetPercent: 25 },
         openai: { baseUrl: '', token: '', model: '' },
       },
     })
@@ -1309,4 +1421,19 @@ function formatManagedLocalRuntimeCompatibilityMessage(input: {
     return `Selected llama GGUF group ${input.groupLabel} cannot be loaded by the current node-llama-cpp runtime: ${input.detail}`
   }
   return input.detail
+}
+
+function readProcessTotalMemoryMb(): number | undefined {
+  const totalMemory = Reflect.get(process, 'constrainedMemory')
+  if (typeof totalMemory === 'function') {
+    const value = totalMemory.call(process)
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return Math.round(value / (1024 * 1024))
+    }
+  }
+  const value = totalmem()
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.round(value / (1024 * 1024))
+  }
+  return undefined
 }

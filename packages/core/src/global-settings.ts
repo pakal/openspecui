@@ -145,6 +145,12 @@ export function toPersistedGlobalSettings(
   if (settings.translationEngines.local.hfEndpoint !== defaultTranslationEngines.local.hfEndpoint) {
     local.hfEndpoint = settings.translationEngines.local.hfEndpoint
   }
+  if (
+    settings.translationEngines.local.memoryBudgetPercent !==
+    defaultTranslationEngines.local.memoryBudgetPercent
+  ) {
+    local.memoryBudgetPercent = settings.translationEngines.local.memoryBudgetPercent
+  }
   if (hasOwnEntries(local)) {
     translationEngines.local = local
   }
@@ -165,6 +171,12 @@ export function toPersistedGlobalSettings(
   ) {
     localCt2.hfEndpoint = settings.translationEngines.localCt2.hfEndpoint
   }
+  if (
+    settings.translationEngines.localCt2.memoryBudgetPercent !==
+    defaultTranslationEngines.localCt2.memoryBudgetPercent
+  ) {
+    localCt2.memoryBudgetPercent = settings.translationEngines.localCt2.memoryBudgetPercent
+  }
   if (hasOwnEntries(localCt2)) {
     translationEngines.localCt2 = localCt2
   }
@@ -184,6 +196,12 @@ export function toPersistedGlobalSettings(
     defaultTranslationEngines.localLlama.hfEndpoint
   ) {
     localLlama.hfEndpoint = settings.translationEngines.localLlama.hfEndpoint
+  }
+  if (
+    settings.translationEngines.localLlama.memoryBudgetPercent !==
+    defaultTranslationEngines.localLlama.memoryBudgetPercent
+  ) {
+    localLlama.memoryBudgetPercent = settings.translationEngines.localLlama.memoryBudgetPercent
   }
   if (hasOwnEntries(localLlama)) {
     translationEngines.localLlama = localLlama

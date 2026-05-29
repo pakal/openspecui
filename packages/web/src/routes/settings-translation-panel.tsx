@@ -34,6 +34,7 @@ import {
   inferLocalDirectionalModelLanguagePair,
 } from '@openspecui/core/translation-language-pair'
 import {
+  DEFAULT_BATCH_TRANSLATION_TIMEOUT_MS,
   TRANSLATION_ENGINE_IDS,
   createTranslationEngineLifecycleStatus,
   getManagedLocalTranslationEngineManifest,
@@ -82,6 +83,9 @@ import {
 const DEFAULT_TRANSLATION_TARGET_LANGUAGE = 'zh'
 const DEFAULT_TRANSLATION_DISPLAY_MODE: DocumentTranslationDisplayMode = 'direct'
 const DEFAULT_TRANSLATION_CACHE_ENABLED = false
+const DEFAULT_TRANSLATION_SMOKE_TIMEOUT_SECONDS = Math.round(
+  DEFAULT_BATCH_TRANSLATION_TIMEOUT_MS / 1000
+)
 const DEFAULT_LOCAL_MODEL_ID = 'Xenova/opus-mt-no-de'
 const DEFAULT_LOCAL_CT2_MODEL_ID = 'ooeoeo/opus-mt-en-zh-ct2-float16'
 const DEFAULT_LOCAL_LLAMA_MODEL_ID = 'bartowski/Qwen2.5-0.5B-Instruct-GGUF'
@@ -121,6 +125,20 @@ function getBrowserSupportRows(
   state: BrowserTranslationSupportTableState | null
 ): BrowserTranslationAvailabilityRow[] {
   return state?.table?.rows ?? []
+}
+
+function getPreferredBrowserPairKey(
+  rows: readonly BrowserTranslationAvailabilityRow[],
+  current: string | null = null
+): string | null {
+  if (current && rows.some((row) => getBrowserPairKey(row) === current)) {
+    return current
+  }
+  const firstDownloadedRow = rows.find((row) => row.availability === 'available')
+  if (firstDownloadedRow) {
+    return getBrowserPairKey(firstDownloadedRow)
+  }
+  return rows[0] ? getBrowserPairKey(rows[0]) : null
 }
 
 function getBrowserPairKey(
@@ -354,9 +372,24 @@ function getManagedLocalEngineSettings(input: {
   globalSettings:
     | {
         translationEngines?: {
-          local?: { model?: string; selectedGroupId?: string; hfEndpoint?: string }
-          localCt2?: { model?: string; selectedGroupId?: string; hfEndpoint?: string }
-          localLlama?: { model?: string; selectedGroupId?: string; hfEndpoint?: string }
+          local?: {
+            model?: string
+            selectedGroupId?: string
+            hfEndpoint?: string
+            memoryBudgetPercent?: number
+          }
+          localCt2?: {
+            model?: string
+            selectedGroupId?: string
+            hfEndpoint?: string
+            memoryBudgetPercent?: number
+          }
+          localLlama?: {
+            model?: string
+            selectedGroupId?: string
+            hfEndpoint?: string
+            memoryBudgetPercent?: number
+          }
         }
       }
     | undefined
@@ -364,6 +397,7 @@ function getManagedLocalEngineSettings(input: {
   model: string
   selectedGroupId: string | undefined
   hfEndpoint: string
+  memoryBudgetPercent: number
 } {
   const projectSettings =
     input.engineId === 'local-ct2'
@@ -384,6 +418,7 @@ function getManagedLocalEngineSettings(input: {
       getManagedLocalDefaultModel(input.engineId),
     selectedGroupId: projectSettings?.selectedGroupId ?? globalEngineSettings?.selectedGroupId,
     hfEndpoint: globalEngineSettings?.hfEndpoint ?? '',
+    memoryBudgetPercent: globalEngineSettings?.memoryBudgetPercent ?? 25,
   }
 }
 
@@ -400,11 +435,31 @@ function createManagedLocalProjectSettingsPatch(
 
 function createManagedLocalGlobalSettingsPatch(
   engineId: ManagedLocalTranslationEngineId,
-  patch: { model?: string; selectedGroupId?: string | null; hfEndpoint?: string }
+  patch: {
+    model?: string
+    selectedGroupId?: string | null
+    hfEndpoint?: string
+    memoryBudgetPercent?: number
+  }
 ): {
-  local?: { model?: string; selectedGroupId?: string | null; hfEndpoint?: string }
-  localCt2?: { model?: string; selectedGroupId?: string | null; hfEndpoint?: string }
-  localLlama?: { model?: string; selectedGroupId?: string | null; hfEndpoint?: string }
+  local?: {
+    model?: string
+    selectedGroupId?: string | null
+    hfEndpoint?: string
+    memoryBudgetPercent?: number
+  }
+  localCt2?: {
+    model?: string
+    selectedGroupId?: string | null
+    hfEndpoint?: string
+    memoryBudgetPercent?: number
+  }
+  localLlama?: {
+    model?: string
+    selectedGroupId?: string | null
+    hfEndpoint?: string
+    memoryBudgetPercent?: number
+  }
 } {
   return engineId === 'local-ct2'
     ? { localCt2: patch }
@@ -580,7 +635,13 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const inStaticMode = isStaticMode()
   const { data: config, isLoading: configLoading } = useConfigSubscription()
   const { data: globalSettings } = useGlobalSettingsSubscription()
-  const { data: engines, refetch: refetchEngines } = useQuery({
+  const {
+    data: engines,
+    refetch: refetchEngines,
+    isLoading: enginesLoading,
+    isFetching: enginesFetching,
+    error: enginesError,
+  } = useQuery({
     ...trpc.translationEngines.list.queryOptions(),
     enabled: !inStaticMode,
   })
@@ -615,6 +676,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const [nmtModelQuery, setNmtModelQuery] = useState(DEFAULT_LOCAL_MODEL_ID)
   const [nmtDebouncedQuery, setNmtDebouncedQuery] = useState(DEFAULT_LOCAL_MODEL_ID)
   const [nmtHfEndpoint, setNmtHfEndpoint] = useState('')
+  const [nmtMemoryBudgetPercent, setNmtMemoryBudgetPercent] = useState(25)
   const [nmtSelectedGroupId, setNmtSelectedGroupId] = useState<string | undefined>(undefined)
   const [nmtLocalOptions, setNmtLocalOptions] = useState<LocalModelCatalogItem[]>([])
   const [nmtRemoteOptions, setNmtRemoteOptions] = useState<LocalModelCatalogItem[]>([])
@@ -627,7 +689,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const [smokeSourceText, setSmokeSourceText] = useState('')
   const [smokeResult, setSmokeResult] = useState('')
   const [smokeError, setSmokeError] = useState<string | null>(null)
+  const [smokeElapsedMs, setSmokeElapsedMs] = useState<number | null>(null)
   const [smokeRunning, setSmokeRunning] = useState(false)
+  const [smokeTimeoutSeconds, setSmokeTimeoutSeconds] = useState(
+    DEFAULT_TRANSLATION_SMOKE_TIMEOUT_SECONDS
+  )
   const [engineLifecycle, setEngineLifecycle] = useState<TranslationEngineLifecycleStatus | null>(
     null
   )
@@ -693,6 +759,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     setNmtModelQuery(managedLocalEngine.model)
     setNmtDebouncedQuery(managedLocalEngine.model)
     setNmtHfEndpoint(managedLocalEngine.hfEndpoint)
+    setNmtMemoryBudgetPercent(managedLocalEngine.memoryBudgetPercent)
     setNmtSelectedGroupId(managedLocalEngine.selectedGroupId)
   }, [
     activeManagedLocalEngineId,
@@ -707,12 +774,15 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     globalSettings?.translationEngines?.openai?.model,
     globalSettings?.translationEngines?.openai?.token,
     globalSettings?.translationEngines?.local?.hfEndpoint,
+    globalSettings?.translationEngines?.local?.memoryBudgetPercent,
     globalSettings?.translationEngines?.local?.model,
     globalSettings?.translationEngines?.local?.selectedGroupId,
     globalSettings?.translationEngines?.localCt2?.hfEndpoint,
+    globalSettings?.translationEngines?.localCt2?.memoryBudgetPercent,
     globalSettings?.translationEngines?.localCt2?.model,
     globalSettings?.translationEngines?.localCt2?.selectedGroupId,
     globalSettings?.translationEngines?.localLlama?.hfEndpoint,
+    globalSettings?.translationEngines?.localLlama?.memoryBudgetPercent,
     globalSettings?.translationEngines?.localLlama?.model,
     globalSettings?.translationEngines?.localLlama?.selectedGroupId,
     resolvedTranslationConfig?.engines?.local?.model,
@@ -1098,10 +1168,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
         setBrowserSupportTable(state)
         const selectedRows = getBrowserSupportRows(state)
         setBrowserSelectedPairKey((current) => {
-          if (current && selectedRows.some((row) => getBrowserPairKey(row) === current)) {
-            return current
-          }
-          return selectedRows[0] ? getBrowserPairKey(selectedRows[0]) : null
+          return getPreferredBrowserPairKey(selectedRows, current)
         })
       } finally {
         controller.abort()
@@ -1118,10 +1185,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       setBrowserSupportTable(cached)
       const cachedRows = getBrowserSupportRows(cached)
       setBrowserSelectedPairKey((current) => {
-        if (current && cachedRows.some((row) => getBrowserPairKey(row) === current)) {
-          return current
-        }
-        return cachedRows[0] ? getBrowserPairKey(cachedRows[0]) : null
+        return getPreferredBrowserPairKey(cachedRows, current)
       })
       return
     }
@@ -1155,10 +1219,51 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     [engines, inStaticMode]
   )
   const selectedEngine = engines?.find((engine) => engine.id === effectiveTranslationEngineId)
-  const selectedEngineLifecycle = selectedEngine?.lifecycle ?? null
   const selectedEngineManifest = effectiveTranslationEngineId
     ? getTranslationEngineManifest(effectiveTranslationEngineId)
     : null
+  const selectedEngineLifecycle = useMemo(() => {
+    if (selectedEngine?.lifecycle) {
+      return selectedEngine.lifecycle
+    }
+    if (!effectiveTranslationEngineId || effectiveTranslationEngineId === 'browser' || selectedEngine) {
+      return null
+    }
+    if (enginesLoading || enginesFetching) {
+      return createTranslationEngineLifecycleStatus({
+        dependency: {
+          state: 'not-applicable',
+          message: 'Checking translation engine status.',
+        },
+        runtime: {
+          state: 'probing',
+          message: 'Checking translation engine status.',
+        },
+        summary: 'Checking translation engine status.',
+      })
+    }
+    if (enginesError instanceof Error) {
+      return createTranslationEngineLifecycleStatus({
+        dependency: {
+          state: 'error',
+          message: 'Failed to load translation engine status.',
+          error: enginesError.message,
+        },
+        runtime: {
+          state: 'error',
+          error: enginesError.message,
+        },
+        summary: 'Failed to load translation engine status.',
+      })
+    }
+    return null
+  }, [
+    effectiveTranslationEngineId,
+    enginesError,
+    enginesFetching,
+    enginesLoading,
+    selectedEngine,
+  ])
   const selectedManagedLocalManifest = effectiveManagedLocalEngineId
     ? getManagedLocalTranslationEngineManifest(effectiveManagedLocalEngineId)
     : null
@@ -1166,12 +1271,13 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     () => getBrowserSupportRows(browserSupportTable),
     [browserSupportTable]
   )
-  const selectedBrowserRow = useMemo(
-    () =>
-      browserRows.find((row) => getBrowserPairKey(row) === browserSelectedPairKey) ??
-      browserRows[0] ??
-      null,
+  const selectedBrowserPairKey = useMemo(
+    () => getPreferredBrowserPairKey(browserRows, browserSelectedPairKey),
     [browserRows, browserSelectedPairKey]
+  )
+  const selectedBrowserRow = useMemo(
+    () => browserRows.find((row) => getBrowserPairKey(row) === selectedBrowserPairKey) ?? null,
+    [browserRows, selectedBrowserPairKey]
   )
   const browserStatusIconState = getBrowserStatusIconState(browserSupportTable)
   const browserSupportMessage = getBrowserSupportMessage(browserSupportTable)
@@ -1325,6 +1431,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const shouldShowInstallFlow =
     effectiveTranslationEngineId !== null &&
     shouldShowTranslationEngineInstallGate(resolvedLifecycle)
+  const shouldShowEngineInstallLogs =
+    engineInstallLogs.length > 0 &&
+    (resolvedLifecycle?.dependency.state === 'installing' ||
+      resolvedLifecycle?.dependency.state === 'error' ||
+      resolvedLifecycle?.runtime.state === 'error')
   const startBrowserPairPreparation = useCallback(
     async (row: BrowserTranslationAvailabilityRow) => {
       browserPrepareControllerRef.current?.abort()
@@ -1404,11 +1515,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
 
     const sourceLanguage = smokeSourceLanguage.trim() || DEFAULT_TRANSLATION_SMOKE_SOURCE_LANGUAGE
     const targetLanguage = translationTargetLanguage.trim() || DEFAULT_TRANSLATION_TARGET_LANGUAGE
+    const timeoutMs = Math.max(
+      1,
+      Math.round(smokeTimeoutSeconds * 1000 || DEFAULT_BATCH_TRANSLATION_TIMEOUT_MS)
+    )
 
     setSmokeRunning(true)
     setSmokeError(null)
     setSmokeResult('')
+    setSmokeElapsedMs(null)
     try {
+      const startedAt = performance.now()
       const smokeModel = isManagedLocalTranslationEngineId(effectiveTranslationEngineId)
         ? nmtModel.trim() || undefined
         : effectiveTranslationEngineId === 'openai'
@@ -1423,9 +1540,12 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
           ? effectiveLocalSelectedGroupId
           : undefined,
         text: sourceText,
+        timeoutMs,
       })
+      setSmokeElapsedMs(Math.max(1, Math.round(performance.now() - startedAt)))
       setSmokeResult(result)
     } catch (error) {
+      setSmokeElapsedMs(null)
       setSmokeError(error instanceof Error ? error.message : 'Translation test failed.')
     } finally {
       setSmokeRunning(false)
@@ -1436,6 +1556,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     nmtModel,
     smokeSourceLanguage,
     smokeSourceText,
+    smokeTimeoutSeconds,
     effectiveTranslationEngineId,
     translationTargetLanguage,
   ])
@@ -1569,8 +1690,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                           if (cached) {
                             setBrowserSupportTable(cached)
                             const cachedRows = getBrowserSupportRows(cached)
-                            setBrowserSelectedPairKey(
-                              cachedRows[0] ? getBrowserPairKey(cachedRows[0]) : null
+                            setBrowserSelectedPairKey((current) =>
+                              getPreferredBrowserPairKey(cachedRows, current)
                             )
                           } else {
                             void refreshBrowserSupportTable(translationTargetLanguage)
@@ -1640,13 +1761,23 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                           <CheckCircle className="h-4 w-4" />
                         </button>
                       </Tooltip>
-                    ) : resolvedLifecycle?.dependency.state === 'installing' ||
-                      resolvedLifecycle?.runtime.state === 'probing' ? (
+                    ) : resolvedLifecycle?.dependency.state === 'installing' ? (
                       <Button
                         type="button"
                         size="icon-sm"
                         variant="primary"
                         aria-label="Installing translation engine"
+                        className="bg-primary text-primary-foreground hover:bg-primary/90 h-7 w-7 shrink-0 rounded-full"
+                        disabled
+                      >
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      </Button>
+                    ) : resolvedLifecycle?.runtime.state === 'probing' ? (
+                      <Button
+                        type="button"
+                        size="icon-sm"
+                        variant="primary"
+                        aria-label="Checking translation engine status"
                         className="bg-primary text-primary-foreground hover:bg-primary/90 h-7 w-7 shrink-0 rounded-full"
                         disabled
                       >
@@ -1689,7 +1820,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                       </Button>
                     )}
                     <span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">
-                      {resolvedLifecycle?.dependency.state === 'installing' && engineInstallLogs ? (
+                      {shouldShowEngineInstallLogs ? (
                         <pre
                           ref={engineInstallLogRef}
                           className="bg-muted/40 border-border scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[color-mix(in_srgb,currentColor,transparent_78%)] max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border px-3 py-2 font-mono text-[11px] leading-5"
@@ -1787,8 +1918,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     aria-label="Browser translation language pairs"
                   >
                     {browserRows.map((row) => {
-                      const selected =
-                        getBrowserPairKey(row) === getBrowserPairKey(selectedBrowserRow ?? row)
+                      const selected = getBrowserPairKey(row) === selectedBrowserPairKey
                       return (
                         <button
                           key={getBrowserPairKey(row)}
@@ -1922,13 +2052,18 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     </Tooltip>
                     <LocalProviderSettingsPopover
                       value={nmtHfEndpoint}
+                      memoryBudgetPercent={nmtMemoryBudgetPercent}
                       resolvedEndpoint={nmtResolvedHfEndpoint}
                       onValueChange={setNmtHfEndpoint}
+                      onMemoryBudgetPercentChange={setNmtMemoryBudgetPercent}
                       onCommit={(endpoint) => {
                         saveGlobalSettingsMutation.mutate({
                           translationEngines: createManagedLocalGlobalSettingsPatch(
                             effectiveManagedLocalEngineId,
-                            { hfEndpoint: endpoint }
+                            {
+                              hfEndpoint: endpoint,
+                              memoryBudgetPercent: nmtMemoryBudgetPercent,
+                            }
                           ),
                         })
                         setNmtRemoteOptions([])
@@ -2142,6 +2277,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
           engineId={effectiveTranslationEngineId}
           sourceLanguage={smokeSourceLanguage}
           sourceText={smokeSourceText}
+          timeoutSeconds={smokeTimeoutSeconds}
           result={smokeResult}
           error={smokeError}
           running={smokeRunning}
@@ -2151,14 +2287,19 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
             setSmokeSourceText(preset.sourceText)
             setSmokeResult('')
             setSmokeError(null)
+            setSmokeElapsedMs(null)
           }}
           onRun={() => void runSmokeTest()}
+          targetLanguage={translationTargetLanguage}
           onSourceLanguageChange={(sourceLanguage) => {
             setSmokeSourceLanguage(sourceLanguage)
             setSmokeResult('')
             setSmokeError(null)
+            setSmokeElapsedMs(null)
           }}
           onSourceTextChange={setSmokeSourceText}
+          onTimeoutSecondsChange={setSmokeTimeoutSeconds}
+          elapsedMs={smokeElapsedMs}
         />
       </div>
     </TocSection>
@@ -2400,28 +2541,41 @@ function TranslationTestDialog({
   engineId,
   sourceLanguage,
   sourceText,
+  targetLanguage,
+  timeoutSeconds,
   result,
   error,
+  elapsedMs,
   running,
   onSample,
   onRun,
   onSourceLanguageChange,
   onSourceTextChange,
+  onTimeoutSecondsChange,
 }: {
   open: boolean
   onClose: () => void
   engineId: TranslationEngineId | null
   sourceLanguage: string
   sourceText: string
+  targetLanguage: string
+  timeoutSeconds: number
   result: string
   error: string | null
+  elapsedMs: number | null
   running: boolean
   onSample: () => void
   onRun: () => void
   onSourceLanguageChange: (sourceLanguage: string) => void
   onSourceTextChange: (sourceText: string) => void
+  onTimeoutSecondsChange: (timeoutSeconds: number) => void
 }) {
   if (!open) return null
+  const targetLanguageOption = findTranslationLanguage(targetLanguage)
+  const targetLanguageLabel = targetLanguageOption?.label ?? targetLanguage
+  const outputToneClasses = error
+    ? 'border-destructive/30 bg-destructive/5 text-destructive'
+    : 'border-input bg-background text-foreground'
 
   return (
     <Dialog
@@ -2439,13 +2593,56 @@ function TranslationTestDialog({
           Sample
         </Button>
       }
-      className="max-w-3xl"
+      className="max-w-5xl"
+      footer={
+        <div className="@[42rem]:grid-cols-[minmax(0,1fr)_auto] grid w-full gap-3">
+          <p className="text-muted-foreground max-w-2xl text-xs">
+            {engineId === 'local'
+              ? 'Uses the configured local model and server runtime.'
+              : engineId === 'local-ct2'
+                ? 'Uses the configured CT2 model artifacts and server runtime.'
+                : engineId === 'local-llama'
+                  ? 'Uses the configured local GGUF model and llama.cpp server runtime.'
+                  : engineId === 'openai'
+                    ? 'Uses the configured OpenAI-compatible provider and model.'
+                    : 'Uses the current browser Translator API capability.'}
+          </p>
+          <div className="flex flex-wrap items-end justify-start gap-2 @[42rem]:justify-end">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <span>Timeout (seconds)</span>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={timeoutSeconds}
+                onChange={(event) =>
+                  onTimeoutSecondsChange(
+                    Math.max(
+                      1,
+                      Number(event.currentTarget.value) || DEFAULT_TRANSLATION_SMOKE_TIMEOUT_SECONDS
+                    )
+                  )
+                }
+                className="border-input bg-background h-9 w-24 rounded-md border px-3 text-sm"
+              />
+            </label>
+            <Button size="sm" variant="secondary" onClick={onRun} disabled={running}>
+              {running ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+              Run Test
+            </Button>
+          </div>
+        </div>
+      }
     >
-      <div className="space-y-4">
-        <div className="@[56rem]:grid-cols-[minmax(10rem,12rem)_minmax(0,1fr)] grid gap-3">
-          <label className="block text-sm font-medium">
-            Source Language
-            <div className="mt-2">
+      <div className="grid gap-4 @[64rem]:grid-cols-2">
+        <section className="bg-muted/20 border-border flex min-h-[23rem] flex-col rounded-xl border">
+          <div className="border-border space-y-2 border-b px-4 py-4">
+            <div className="text-foreground text-sm font-medium">Source Language</div>
+            <div>
               <TranslationLanguageCombobox
                 value={sourceLanguage}
                 onChange={onSourceLanguageChange}
@@ -2458,71 +2655,92 @@ function TranslationTestDialog({
                 disabled={running}
               />
             </div>
-          </label>
-          <label className="block text-sm font-medium">
-            Source Text
+          </div>
+          <label className="flex min-h-0 flex-1 flex-col px-4 py-4 text-sm font-medium">
+            <span className="text-foreground">Source Text</span>
             <textarea
               aria-label="Translation test source text"
               value={sourceText}
               onChange={(event) => onSourceTextChange(event.currentTarget.value)}
-              rows={4}
-              className="border-input bg-background focus:ring-ring mt-2 w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2"
+              rows={10}
+              className="border-input bg-background focus:ring-ring mt-2 min-h-[15rem] flex-1 resize-none rounded-md border px-3 py-3 text-sm focus:outline-none focus:ring-2"
               placeholder={getTranslationTestPlaceholder(sourceLanguage)}
             />
           </label>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={onRun} disabled={running}>
-            {running ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="h-3.5 w-3.5" />
-            )}
-            Run Test
-          </Button>
-          <p className="text-muted-foreground text-xs">
-            {engineId === 'local'
-              ? 'Uses the configured local model and server runtime.'
-              : engineId === 'local-ct2'
-                ? 'Uses the configured CT2 model artifacts and server runtime.'
-                : engineId === 'local-llama'
-                  ? 'Uses the configured local GGUF model and llama.cpp server runtime.'
-                  : engineId === 'openai'
-                    ? 'Uses the configured OpenAI-compatible provider and model.'
-                    : 'Uses the current browser Translator API capability.'}
-          </p>
-        </div>
-
-        {error ? (
-          <div className="border-destructive/30 bg-destructive/5 text-destructive rounded-md border px-3 py-2 text-xs">
-            {error}
+        </section>
+        <section className="bg-muted/20 border-border flex min-h-[23rem] flex-col rounded-xl border">
+          <div className="border-border space-y-2 border-b px-4 py-4">
+            <div className="text-foreground text-sm font-medium">Target Language</div>
+            <div
+              aria-label="Translation test target language"
+              className="border-input bg-background text-foreground flex h-10 items-center rounded-md border px-3 text-sm"
+            >
+              {targetLanguageLabel}
+            </div>
           </div>
-        ) : null}
-        {result ? (
-          <div className="bg-muted/30 border-border rounded-md border px-3 py-2">
-            <div className="text-foreground text-xs font-medium">Translated Output</div>
-            <p className="text-foreground mt-1 whitespace-pre-wrap text-sm">{result}</p>
+          <div className="flex min-h-0 flex-1 flex-col px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-foreground text-sm font-medium">Translated Output</div>
+              {elapsedMs !== null ? (
+                <div
+                  aria-label="Translation test elapsed time"
+                  className="text-muted-foreground shrink-0 text-xs"
+                >
+                  {formatTranslationTestElapsed(elapsedMs)}
+                </div>
+              ) : null}
+            </div>
+            <div
+              className={`mt-2 min-h-[15rem] flex-1 rounded-md border px-3 py-3 text-sm ${outputToneClasses}`}
+            >
+              {running ? (
+                <div className="text-muted-foreground flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Running translation test…
+                </div>
+              ) : result ? (
+                <p className="whitespace-pre-wrap">{result}</p>
+              ) : error ? (
+                <p className="whitespace-pre-wrap">{error}</p>
+              ) : (
+                <p className="text-muted-foreground">
+                  Run a test to inspect translated output for the current engine.
+                </p>
+              )}
+            </div>
           </div>
-        ) : null}
+        </section>
       </div>
     </Dialog>
   )
 }
 
+function formatTranslationTestElapsed(elapsedMs: number): string {
+  if (elapsedMs >= 1000) {
+    return `Elapsed ${Math.max(0.01, elapsedMs / 1000).toFixed(2)}s`
+  }
+  return `Elapsed ${Math.max(1, Math.round(elapsedMs))}ms`
+}
+
 function LocalProviderSettingsPopover({
   value,
+  memoryBudgetPercent,
   resolvedEndpoint,
   onValueChange,
+  onMemoryBudgetPercentChange,
   onCommit,
 }: {
   value: string
+  memoryBudgetPercent: number
   resolvedEndpoint: string
   onValueChange: (value: string) => void
+  onMemoryBudgetPercentChange: (value: number) => void
   onCommit: (endpoint: string) => void
 }) {
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, '')
   const popoverId = `translation-local-provider-popover-${id}`
+  const endpointInputId = `translation-local-provider-endpoint-${id}`
+  const endpointHintId = `translation-local-provider-endpoint-hint-${id}`
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -2628,11 +2846,15 @@ function LocalProviderSettingsPopover({
             : undefined
         }
       >
-        <label className="block text-sm font-medium">
-          HF Endpoint
+        <div className="space-y-2">
+          <label htmlFor={endpointInputId} className="block text-sm font-medium">
+            HF Endpoint
+          </label>
           <input
+            id={endpointInputId}
             ref={inputRef}
             value={value}
+            aria-describedby={endpointHintId}
             onChange={(event) => onValueChange(event.currentTarget.value)}
             onBlur={commit}
             onKeyDown={(event) => {
@@ -2642,13 +2864,38 @@ function LocalProviderSettingsPopover({
               }
               if (event.key === 'Escape') hidePopover()
             }}
-            className="border-input bg-background mt-2 h-9 w-full rounded-md border px-3 text-sm"
+            className="border-input bg-background h-9 w-full rounded-md border px-3 text-sm"
             placeholder="https://huggingface.co"
           />
-        </label>
-        <div className="text-muted-foreground text-xs leading-5 [overflow-wrap:anywhere]">
-          Current endpoint: {resolvedEndpoint}. Mirror example: https://hf-mirror.com
+          <div
+            id={endpointHintId}
+            className="text-muted-foreground text-xs leading-5 [overflow-wrap:anywhere]"
+          >
+            <div>Current endpoint: {resolvedEndpoint}</div>
+            <div>Mirror example: https://hf-mirror.com</div>
+          </div>
         </div>
+        <label className="block text-sm font-medium">
+          Max memory budget
+          <div className="mt-2 flex items-center gap-3">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={memoryBudgetPercent}
+              onChange={(event) =>
+                onMemoryBudgetPercentChange(
+                  Math.max(0, Math.min(100, Number(event.currentTarget.value) || 0))
+                )
+              }
+              className="flex-1"
+            />
+            <span className="text-muted-foreground min-w-12 text-right text-xs">
+              {memoryBudgetPercent}%
+            </span>
+          </div>
+        </label>
       </div>
     </div>
   )

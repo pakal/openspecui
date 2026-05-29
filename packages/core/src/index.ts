@@ -116,6 +116,14 @@ export {
   type Task,
 } from './schemas.js'
 
+export {
+  isBatchTranslationAbort,
+  normalizeBatchTranslationError,
+  runControlledTranslationTask,
+  type BatchTranslationError,
+  type BatchTranslationErrorKind,
+} from './translation-task-control.js'
+
 // Reactive file system for realtime updates
 export {
   // Low-level project watcher

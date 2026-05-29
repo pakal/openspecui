@@ -1,4 +1,8 @@
 import { z } from 'zod'
+import {
+  BATCH_TRANSLATION_ERROR_KINDS,
+  type BatchTranslationError,
+} from './translation-task-control.js'
 
 export const TRANSLATOR_CONTRACT_VERSION = 3
 
@@ -44,15 +48,19 @@ export const ServiceTranslationEngineIdSchema = z.enum(SERVICE_TRANSLATION_ENGIN
 
 export type ServiceTranslationEngineId = z.infer<typeof ServiceTranslationEngineIdSchema>
 
+export const DEFAULT_BATCH_TRANSLATION_TIMEOUT_MS = 15_000
+
 export interface TranslatorOptions {
   instructions?: string
   context?: string
   signal?: AbortSignal
+  timeoutMs?: number
 }
 
 export interface BatchTranslationResult {
   index: number
-  output: string
+  output?: string
+  error?: BatchTranslationError
 }
 
 export interface Translator {
@@ -794,6 +802,7 @@ export const TranslationLocalSettingsSchema = z.object({
   model: z.string().default('Xenova/nllb-200-distilled-600M'),
   selectedGroupId: z.string().optional(),
   hfEndpoint: z.string().default(''),
+  memoryBudgetPercent: z.number().min(0).max(100).default(25),
 })
 
 export type TranslationLocalSettings = z.infer<typeof TranslationLocalSettingsSchema>
@@ -802,6 +811,7 @@ export const TranslationLocalCt2SettingsSchema = z.object({
   model: z.string().default('ooeoeo/opus-mt-en-zh-ct2-float16'),
   selectedGroupId: z.string().optional(),
   hfEndpoint: z.string().default(''),
+  memoryBudgetPercent: z.number().min(0).max(100).default(25),
 })
 
 export type TranslationLocalCt2Settings = z.infer<typeof TranslationLocalCt2SettingsSchema>
@@ -810,6 +820,7 @@ export const TranslationLocalLlamaSettingsSchema = z.object({
   model: z.string().default('bartowski/Qwen2.5-0.5B-Instruct-GGUF'),
   selectedGroupId: z.string().optional(),
   hfEndpoint: z.string().default(''),
+  memoryBudgetPercent: z.number().min(0).max(100).default(25),
 })
 
 export type TranslationLocalLlamaSettings = z.infer<typeof TranslationLocalLlamaSettingsSchema>
@@ -847,13 +858,29 @@ export const BatchTranslateInputSchema = z.object({
   inputs: z.array(z.string()).min(1),
   instructions: z.string().optional(),
   context: z.string().optional(),
+  timeoutMs: z.number().int().positive().default(DEFAULT_BATCH_TRANSLATION_TIMEOUT_MS),
 })
 
 export type BatchTranslateInput = z.infer<typeof BatchTranslateInputSchema>
 
 export const BatchTranslateEventSchema = z.object({
   index: z.number().int().nonnegative(),
-  output: z.string(),
+  output: z.string().optional(),
+  error: z
+    .object({
+      kind: z.enum(BATCH_TRANSLATION_ERROR_KINDS),
+      message: z.string().min(1),
+    })
+    .optional(),
 })
 
 export type BatchTranslateEvent = z.infer<typeof BatchTranslateEventSchema>
+export {
+  isBatchTranslationAbort,
+  normalizeBatchTranslationError,
+  runControlledTranslationTask,
+} from './translation-task-control.js'
+export type {
+  BatchTranslationError,
+  BatchTranslationErrorKind,
+} from './translation-task-control.js'

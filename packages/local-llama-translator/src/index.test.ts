@@ -73,7 +73,7 @@ describe('local-llama-translator package', () => {
     })
     const outputs: string[] = []
     for await (const event of translator.batchTranslate(['Hello'])) {
-      outputs.push(event.output)
+      if (event.output) outputs.push(event.output)
     }
 
     expect(getLlama).toHaveBeenCalledTimes(1)
@@ -84,6 +84,51 @@ describe('local-llama-translator package', () => {
     )
     expect(outputs).toEqual(['你好'])
     expect(disposeSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports per-input timeout failures for llama translation tasks', async () => {
+    const prompt = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          setTimeout(() => resolve('你好'), 20)
+        })
+    )
+    const factory = createLocalLlamaTranslatorFactory({
+      defaultModel: 'demo.gguf',
+      loadModule: async () => ({
+        getLlama: async () => ({
+          loadModel: async () => ({
+            createContext: async () => ({
+              getSequence: () => ({ id: 'sequence' }),
+              dispose: vi.fn(),
+            }),
+            dispose: vi.fn(),
+          }),
+        }),
+        LlamaChatSession: class {
+          prompt = prompt
+        },
+      }),
+    })
+
+    const translator = await factory.create({
+      sourceLanguage: 'en',
+      targetLanguage: 'zh',
+    })
+    const outputs = []
+    for await (const event of translator.batchTranslate(['Hello'], { timeoutMs: 1 })) {
+      outputs.push(event)
+    }
+
+    expect(outputs).toEqual([
+      {
+        index: 0,
+        error: {
+          kind: 'timeout',
+          message: 'Translation task timed out after 1ms.',
+        },
+      },
+    ])
   })
 
   it('probes llama model load without creating a translation session', async () => {

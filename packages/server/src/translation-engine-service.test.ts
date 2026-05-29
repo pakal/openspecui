@@ -401,9 +401,157 @@ describe('TranslationEngineService', () => {
       expect.objectContaining({
         model: 'Xenova/opus-mt-en-de',
         dtype: 'q4',
-        runtimeConfig: { model_type: 'marian' },
+        runtimeConfig: {
+          model_type: 'marian',
+          device: 'cpu',
+          session_options: {
+            enableCpuMemArena: false,
+            enableMemPattern: false,
+          },
+        },
       })
     )
+  })
+
+  it('maps managed local memory budget intent into runtime strategy for local transformers', async () => {
+    const testableService = service as TestableTranslationEngineService
+    const create = vi.fn(async () => ({
+      batchTranslate: async function* (): AsyncGenerator<BatchTranslateEvent> {
+        yield { index: 0, output: 'Hallo' }
+      },
+      destroy: vi.fn(),
+    }))
+    vi.spyOn(testableService, 'loadFactory').mockResolvedValue({ create })
+    await new GlobalSettingsManager(settingsPath).writeSettings({
+      translationEngines: {
+        local: {
+          model: 'Xenova/opus-mt-en-de',
+          selectedGroupId: 'q4',
+          hfEndpoint: '',
+          memoryBudgetPercent: 80,
+        },
+      },
+    })
+    const plan = createLocalDownloadPlan('Xenova/opus-mt-en-de', 'q4', {
+      rootDir: join(tempDir, 'profiles', 'q4'),
+    })
+    await writePersistedLocalAssetPlan(localAssetIndexPath, plan, {
+      status: 'downloaded',
+      bytesDownloaded: 31,
+      progress: 1,
+      rootDir: join(tempDir, 'profiles', 'q4'),
+    })
+    await writeLocalProfileFiles(join(tempDir, 'profiles', 'q4'), [
+      'config.json',
+      'onnx/encoder_model_q4.onnx',
+      'onnx/decoder_model_merged_q4.onnx',
+    ])
+
+    await collectBatchEvents(
+      service.batchTranslate({
+        engineId: 'local',
+        sourceLanguage: 'en',
+        targetLanguage: 'de',
+        model: 'Xenova/opus-mt-en-de',
+        selectedGroupId: 'q4',
+        inputs: ['Hello'],
+      })
+    )
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeConfig: expect.objectContaining({
+          model_type: 'marian',
+          device: 'gpu',
+          session_options: {
+            enableCpuMemArena: true,
+            enableMemPattern: true,
+          },
+        }),
+      })
+    )
+  })
+
+  it('passes managed local worker resource limits derived from memory budget into the executor', async () => {
+    let capturedInput:
+      | Parameters<
+          NonNullable<
+            ConstructorParameters<
+              typeof TranslationEngineService
+            >[0]['executeManagedLocalBatchTranslate']
+          >
+        >[0]
+      | undefined
+    const executorService = new TranslationEngineService({
+      projectDir,
+      configManager: new ConfigManager(projectDir),
+      globalSettingsManager: new GlobalSettingsManager(settingsPath),
+      now: () => 100,
+      localCacheDir,
+      localAssetIndexPath,
+      localFetchCachePath,
+      localLlamaCacheDir,
+      localLlamaAssetIndexPath,
+      localLlamaFetchCachePath,
+      executeManagedLocalBatchTranslate: async function* (input) {
+        capturedInput = input
+        yield { index: 0, output: 'Hallo' }
+      },
+    })
+    await new GlobalSettingsManager(settingsPath).writeSettings({
+      translationEngines: {
+        local: {
+          model: 'Xenova/opus-mt-en-de',
+          selectedGroupId: 'q4',
+          hfEndpoint: '',
+          memoryBudgetPercent: 0,
+        },
+      },
+    })
+    const plan = createLocalDownloadPlan('Xenova/opus-mt-en-de', 'q4', {
+      rootDir: join(tempDir, 'profiles', 'q4'),
+    })
+    await writePersistedLocalAssetPlan(localAssetIndexPath, plan, {
+      status: 'downloaded',
+      bytesDownloaded: 31,
+      progress: 1,
+      rootDir: join(tempDir, 'profiles', 'q4'),
+    })
+    await writeLocalProfileFiles(join(tempDir, 'profiles', 'q4'), [
+      'config.json',
+      'onnx/encoder_model_q4.onnx',
+      'onnx/decoder_model_merged_q4.onnx',
+    ])
+
+    const events = await collectBatchEvents(
+      executorService.batchTranslate({
+        engineId: 'local',
+        sourceLanguage: 'en',
+        targetLanguage: 'de',
+        model: 'Xenova/opus-mt-en-de',
+        selectedGroupId: 'q4',
+        inputs: ['Hello'],
+      })
+    )
+
+    expect(events).toEqual([{ index: 0, output: 'Hallo' }])
+    expect(capturedInput).toMatchObject({
+      engineId: 'local',
+      model: 'Xenova/opus-mt-en-de',
+      runtimeConfig: {
+        model_type: 'marian',
+        device: 'cpu',
+        session_options: {
+          enableCpuMemArena: false,
+          enableMemPattern: false,
+        },
+      },
+      workerResourceLimits: {
+        maxOldGenerationSizeMb: 256,
+        maxYoungGenerationSizeMb: 64,
+        codeRangeSizeMb: 128,
+      },
+    })
   })
 
   it('rejects local batch translation when a directional model target conflicts', async () => {
@@ -475,7 +623,14 @@ describe('TranslationEngineService', () => {
     expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         dtype: 'q4',
-        runtimeConfig: { model_type: 'marian' },
+        runtimeConfig: {
+          model_type: 'marian',
+          device: 'cpu',
+          session_options: {
+            enableCpuMemArena: false,
+            enableMemPattern: false,
+          },
+        },
       })
     )
   })
@@ -560,6 +715,12 @@ describe('TranslationEngineService', () => {
       expect.objectContaining({
         model: 'tencent/Hy-MT2-1.8B-1.25Bit-GGUF',
         runtimeConfig: {
+          gpuLayers: 8,
+          contextSize: 1024,
+          batchSize: 128,
+          flashAttention: false,
+          useMmap: true,
+          useMlock: false,
           modelPath: join(rootDir, groupId),
         },
       })
