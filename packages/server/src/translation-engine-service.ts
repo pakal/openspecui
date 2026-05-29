@@ -1203,19 +1203,6 @@ async function installManagedLocalRuntime(
     })
   }
 
-  const probingLifecycle = createTranslationEngineLifecycleStatus({
-    dependency: {
-      state: 'installed',
-      message: `${manifest.label} runtime dependencies are installed.`,
-    },
-    runtime: {
-      state: 'probing',
-      message: `Probing ${manifest.label} runtime.`,
-    },
-    summary: `Probing ${manifest.label} runtime.`,
-  })
-  input.onLifecycle?.(probingLifecycle)
-
   const finalLifecycle = await detectManagedLocalLifecycle(engineId)
   input.onLifecycle?.(finalLifecycle)
   return finalLifecycle

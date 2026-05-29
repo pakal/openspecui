@@ -1026,11 +1026,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
         translationEngines: createManagedLocalGlobalSettingsPatch(engineId, patch),
       })
     },
-    [
-      configPresence,
-      saveGlobalSettingsMutation,
-      saveTranslationConfigMutation,
-    ]
+    [configPresence, saveGlobalSettingsMutation, saveTranslationConfigMutation]
   )
   const downloadLocalModelMutation = useMutation({
     mutationFn: (input: { modelId: string; groupId?: string }) => {
@@ -1332,6 +1328,11 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const selectedEngineManifest = effectiveTranslationEngineId
     ? getTranslationEngineManifest(effectiveTranslationEngineId)
     : null
+  const engineMetadataPending =
+    !selectedEngine &&
+    effectiveTranslationEngineId !== null &&
+    effectiveTranslationEngineId !== 'browser' &&
+    (enginesLoading || enginesFetching)
   const selectedEngineLifecycle = useMemo(() => {
     if (selectedEngine?.lifecycle) {
       return selectedEngine.lifecycle
@@ -1342,19 +1343,6 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       selectedEngine
     ) {
       return null
-    }
-    if (enginesLoading || enginesFetching) {
-      return createTranslationEngineLifecycleStatus({
-        dependency: {
-          state: 'not-applicable',
-          message: 'Checking translation engine status.',
-        },
-        runtime: {
-          state: 'probing',
-          message: 'Checking translation engine status.',
-        },
-        summary: 'Checking translation engine status.',
-      })
     }
     if (enginesError instanceof Error) {
       return createTranslationEngineLifecycleStatus({
@@ -1371,7 +1359,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
       })
     }
     return null
-  }, [effectiveTranslationEngineId, enginesError, enginesFetching, enginesLoading, selectedEngine])
+  }, [effectiveTranslationEngineId, enginesError, selectedEngine])
   const selectedManagedLocalManifest = effectiveManagedLocalEngineId
     ? getManagedLocalTranslationEngineManifest(effectiveManagedLocalEngineId)
     : null
@@ -1396,10 +1384,12 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const engineStatusMessage =
     effectiveTranslationEngineId === 'browser'
       ? getBrowserCapabilityMessage(browserSupportTable)
-      : (getTranslationEngineLifecycleMessage(resolvedLifecycle) ??
-        selectedEngine?.message ??
-        selectedEngine?.description ??
-        selectedEngineManifest?.description)
+      : engineMetadataPending
+        ? 'Loading translation engine metadata.'
+        : (getTranslationEngineLifecycleMessage(resolvedLifecycle) ??
+          selectedEngine?.message ??
+          selectedEngine?.description ??
+          selectedEngineManifest?.description)
   const browserRowActionKind = getBrowserRowActionKind({
     row: selectedBrowserRow,
     activeSourceLanguage: browserPreparingSourceLanguage,
@@ -1505,6 +1495,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     localPlanInitialResolvePending
   useEffect(() => {
     if (!effectiveManagedLocalEngineId || !nmtModelId || inStaticMode) return
+    if (engineMetadataPending) return
     if (shouldShowTranslationEngineInstallGate(resolvedLifecycle)) return
     if (localPanelStateQuery.isLoading || localPanelStateQuery.isFetching) return
     if (selectedLocalAsset?.plan?.groups?.length) return
@@ -1517,6 +1508,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
     refreshLocalProfilesMutation.mutate({ modelId: nmtModelId })
   }, [
     effectiveManagedLocalEngineId,
+    engineMetadataPending,
     inStaticMode,
     nmtModelId,
     refreshLocalProfilesMutation,
@@ -1539,6 +1531,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   const shouldShowInstallFlow =
     effectiveTranslationEngineId !== null &&
     shouldShowTranslationEngineInstallGate(resolvedLifecycle)
+  const shouldHideEngineSpecificCards = shouldShowInstallFlow || engineMetadataPending
   const shouldShowEngineInstallLogs =
     engineInstallLogs.length > 0 &&
     (resolvedLifecycle?.dependency.state === 'installing' ||
@@ -1670,7 +1663,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
   ])
   const savedTranslationConfig = {
     enabled: resolvedTranslationConfig?.enabled ?? false,
-    targetLanguage: resolvedTranslationConfig?.targetLanguage ?? DEFAULT_TRANSLATION_TARGET_LANGUAGE,
+    targetLanguage:
+      resolvedTranslationConfig?.targetLanguage ?? DEFAULT_TRANSLATION_TARGET_LANGUAGE,
     displayMode: resolvedTranslationConfig?.displayMode ?? DEFAULT_TRANSLATION_DISPLAY_MODE,
     cacheEnabled: resolvedTranslationConfig?.cacheEnabled ?? DEFAULT_TRANSLATION_CACHE_ENABLED,
     engineId: resolvedTranslationConfig?.engineId ?? 'browser',
@@ -1858,8 +1852,8 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                     </div>
                   ) : null}
                   <div className="text-muted-foreground whitespace-normal text-xs leading-5 [overflow-wrap:anywhere]">
-                    Switching engines only checks installation state. Run Test Translate manually
-                    to validate runtime errors and latency.
+                    Switching engines only checks installation state. Run Test Translate manually to
+                    validate runtime errors and latency.
                   </div>
                   <div className="text-muted-foreground flex min-w-0 items-center gap-2 leading-5">
                     {effectiveTranslationEngineId === 'browser' ? (
@@ -1880,6 +1874,17 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
                       ) : (
                         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
                       )
+                    ) : engineMetadataPending ? (
+                      <Tooltip content="Loading translation engine metadata" delay={0}>
+                        <button
+                          type="button"
+                          aria-label="Loading translation engine metadata"
+                          className="text-muted-foreground inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                          disabled
+                        >
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        </button>
+                      </Tooltip>
                     ) : !shouldShowTranslationEngineInstallGate(resolvedLifecycle) ? (
                       <Tooltip content="Installed" delay={0}>
                         <button
@@ -1967,7 +1972,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
           </div>
         </div>
 
-        {shouldShowInstallFlow ? null : effectiveTranslationEngineId === 'openai' ? (
+        {shouldHideEngineSpecificCards ? null : effectiveTranslationEngineId === 'openai' ? (
           <div className="border-border/60 @[56rem]:grid-cols-3 grid gap-3 border-t pt-3">
             <label className="block text-sm font-medium">
               API Base URL
@@ -2018,7 +2023,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
             </label>
           </div>
         ) : null}
-        {shouldShowInstallFlow ? null : effectiveTranslationEngineId === 'browser' ? (
+        {shouldHideEngineSpecificCards ? null : effectiveTranslationEngineId === 'browser' ? (
           <div className="border-border/60 border-t pt-3">
             <div className="space-y-3 text-xs">
               <div className="space-y-2">
@@ -2157,7 +2162,7 @@ export function SettingsTranslationPanel({ index }: { index: number }) {
             </div>
           </div>
         ) : null}
-        {shouldShowInstallFlow ? null : effectiveManagedLocalEngineId ? (
+        {shouldHideEngineSpecificCards ? null : effectiveManagedLocalEngineId ? (
           <div className="border-border/60 border-t pt-3">
             <div className="space-y-3 text-xs">
               <div className="space-y-2">

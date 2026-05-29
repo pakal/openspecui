@@ -3968,7 +3968,7 @@ describe('Settings', () => {
     expect(screen.queryByText('Loading remote models…')).toBeNull()
   })
 
-  it('shows a checking state and hides engine cards while the engine list is still resolving', async () => {
+  it('shows metadata loading instead of runtime checking while the engine list is still resolving', async () => {
     vi.stubGlobal(
       'matchMedia',
       vi.fn(() => ({
@@ -4012,8 +4012,10 @@ describe('Settings', () => {
 
     await waitFor(() => expect(screen.queryByText('Loading settings...')).toBeNull())
     expect(screen.getByRole('combobox', { name: 'Engine' })).toHaveTextContent('Local-Transformers')
-    expect(screen.getByRole('button', { name: 'Checking translation engine status' })).toBeTruthy()
-    expect(screen.getByText('Checking translation engine status.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Loading translation engine metadata' })).toBeTruthy()
+    expect(screen.getByText('Loading translation engine metadata.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Checking translation engine status' })).toBeNull()
+    expect(screen.queryByText('Checking translation engine status.')).toBeNull()
     expect(screen.queryByLabelText('Local download profiles')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Install translation engine' })).toBeNull()
   })
