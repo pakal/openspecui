@@ -9,7 +9,7 @@ interface CliAvailability {
   error?: string
 }
 
-let availability: CliAvailability = { available: true, version: '1.3.1' }
+let availability: CliAvailability = { available: true, version: '1.4.1' }
 
 vi.mock('@/lib/static-mode', () => ({
   isStaticMode: () => false,
@@ -64,10 +64,10 @@ function renderGate() {
 
 describe('CliHealthGate', () => {
   beforeEach(() => {
-    availability = { available: true, version: '1.3.1' }
+    availability = { available: true, version: '1.4.1' }
   })
 
-  it('does not render for current OpenSpec CLI 1.3.x', async () => {
+  it('does not render for current OpenSpec CLI 1.4.x', async () => {
     renderGate()
 
     await waitFor(() => {
@@ -76,21 +76,21 @@ describe('CliHealthGate', () => {
     })
   })
 
-  it('renders a non-blocking legacy-compatible notice for OpenSpec CLI 1.2.x', async () => {
-    availability = { available: true, version: '1.2.0' }
+  it('renders a non-blocking legacy-compatible notice for OpenSpec CLI 1.3.x', async () => {
+    availability = { available: true, version: '1.3.0' }
 
     renderGate()
 
-    expect(await screen.findByText('OpenSpec CLI 1.2.0 is legacy-compatible')).toBeInTheDocument()
+    expect(await screen.findByText('OpenSpec CLI 1.3.0 is legacy-compatible')).toBeInTheDocument()
     expect(screen.queryByText(/OpenSpec CLI .* Required/)).not.toBeInTheDocument()
   })
 
   it('blocks unsupported OpenSpec CLI versions', async () => {
-    availability = { available: true, version: '1.1.1' }
+    availability = { available: true, version: '1.2.0' }
 
     renderGate()
 
-    expect(await screen.findByText(/OpenSpec CLI >=1.2.0 <1.4.0 Required/)).toBeInTheDocument()
-    expect(screen.getByText(/Detected OpenSpec CLI 1.1.1/)).toBeInTheDocument()
+    expect(await screen.findByText(/OpenSpec CLI >=1.3.0 <1.5.0 Required/)).toBeInTheDocument()
+    expect(screen.getByText(/Detected OpenSpec CLI 1.2.0/)).toBeInTheDocument()
   })
 })

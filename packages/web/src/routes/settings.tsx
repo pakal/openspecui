@@ -1832,8 +1832,8 @@ export function Settings() {
                         className="w-full"
                       />
                       <p className="text-muted-foreground text-xs">
-                        OpenSpec CLI can auto-detect existing tool directories. OpenSpecUI 3.x uses
-                        OpenSpec CLI 1.3.x as the current tool line.
+                        OpenSpec CLI can auto-detect existing tool directories. OpenSpecUI 4.x uses
+                        OpenSpec CLI 1.4.x as the current tool line.
                       </p>
                     </label>
 

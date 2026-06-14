@@ -1,6 +1,6 @@
 # OpenSpec UI
 
-[English](./README.md) | [中文](./README-zh.md)
+[English](./README-1.3.0.md) | [中文](./README-zh-1.3.0.md)
 
 OpenSpecUI is a web interface for OpenSpec workflows (live mode + static export).
 
@@ -8,18 +8,16 @@ OpenSpecUI is a web interface for OpenSpec workflows (live mode + static export)
 
 | OpenSpecUI        | OpenSpec CLI line                                     |
 | ----------------- | ----------------------------------------------------- |
-| `@latest` / `@^4` | current: `>=1.4.0 <1.5.0`; accepted: `>=1.3.0 <1.5.0` |
-| `@^3`             | `>=1.3.0 <1.4.0`                                      |
+| `@latest` / `@^3` | current: `>=1.3.0 <1.4.0`; accepted: `>=1.2.0 <1.4.0` |
 | `@^2`             | `>=1.2.0 <1.3.0`                                      |
 | `@^1`             | `>=1.0.0 <1.2.0`                                      |
 
-OpenSpecUI major versions track OpenSpec CLI minor lines. OpenSpecUI 4.x targets OpenSpec CLI
-1.4.x and remains backward-compatible with 1.3.x projects. OpenSpecUI 3.x does not forward-support
-OpenSpec CLI 1.4.x.
+OpenSpecUI major versions track OpenSpec CLI minor lines. OpenSpecUI 3.x targets OpenSpec CLI
+1.3.x and remains backward-compatible with 1.2.x projects. OpenSpecUI 2.x does not forward-support
+OpenSpec CLI 1.3.x.
 
 Legacy docs:
 
-- 1.3: [`README-1.3.0.md`](./README-1.3.0.md)
 - 1.2: [`README-1.2.0.md`](./README-1.2.0.md)
 - 1.x UI / pre-1.2 CLI line: [`README-1.x.md`](./README-1.x.md)
 - 0.16: [`README-0.16.0.md`](./README-0.16.0.md)
@@ -38,13 +36,13 @@ openspecui
 
 Default URL: `http://localhost:3100`.
 
-## OpenSpec 1.4 Notes
+## OpenSpec 1.3 Notes
 
-- OpenSpecUI 4.x targets OpenSpec CLI `>=1.4.0 <1.5.0`.
-- OpenSpec CLI `>=1.3.0 <1.4.0` is accepted as a legacy-compatible runtime for 4.x.
-- If your CLI is outside `>=1.3.0 <1.5.0`, UI shows `OpenSpec CLI Required` and blocks core interactions until upgraded.
+- OpenSpecUI 3.x targets OpenSpec CLI `>=1.3.0 <1.4.0`.
+- OpenSpec CLI `>=1.2.0 <1.3.0` is accepted as a legacy-compatible runtime for 3.x.
+- If your CLI is outside `>=1.2.0 <1.4.0`, UI shows `OpenSpec CLI Required` and blocks core interactions until upgraded.
 - OpenSpec profile/workflow sync can be inspected from **Settings → OpenSpec Profile & Sync**.
-- OpenSpec CLI 1.4 adds Kimi CLI and Mistral Vibe (skills-only tools), case-insensitive requirement header parsing, clearer validation hints, and makes `/opsx:sync` part of the default `core` profile.
+- OpenSpec CLI 1.3 adds Bob Shell, ForgeCode, Junie, Lingma, refined GitHub Copilot detection, and the OpenCode `.opencode/commands/` command directory.
 
 Upgrade CLI:
 
