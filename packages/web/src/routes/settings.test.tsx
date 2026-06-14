@@ -1999,10 +1999,10 @@ function resolveQueryResultForKey(key: string) {
     }
   }
   if (key === 'cli.sniffGlobalCli') {
-    return { data: { hasGlobal: true, version: '1.3.0', hasUpdate: false }, isLoading: false }
+    return { data: { hasGlobal: true, version: '1.4.1', hasUpdate: false }, isLoading: false }
   }
   if (key === 'cli.checkAvailability') {
-    return { data: { available: true, version: '1.3.0' }, isLoading: false, refetch: vi.fn() }
+    return { data: { available: true, version: '1.4.1' }, isLoading: false, refetch: vi.fn() }
   }
   if (key === 'config.getEffectiveCliCommand') {
     return { data: 'openspec', refetch: vi.fn() }

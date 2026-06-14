@@ -7,16 +7,16 @@ import {
 
 describe('openspec CLI compatibility law', () => {
   it('parses versions from raw CLI output', () => {
-    expect(parseOpenSpecCliVersion('1.3.1')).toEqual({ major: 1, minor: 3, patch: 1 })
-    expect(parseOpenSpecCliVersion('openspec 1.2.0')).toEqual({
+    expect(parseOpenSpecCliVersion('1.4.1')).toEqual({ major: 1, minor: 4, patch: 1 })
+    expect(parseOpenSpecCliVersion('openspec 1.3.0')).toEqual({
       major: 1,
-      minor: 2,
+      minor: 3,
       patch: 0,
     })
   })
 
-  it('classifies 1.3.x as the current OpenSpecUI 3.x target line', () => {
-    expect(classifyOpenSpecCliVersion('1.3.1')).toMatchObject({
+  it('classifies 1.4.x as the current OpenSpecUI 4.x target line', () => {
+    expect(classifyOpenSpecCliVersion('1.4.1')).toMatchObject({
       status: 'current',
       supported: true,
       recommended: true,
@@ -24,8 +24,8 @@ describe('openspec CLI compatibility law', () => {
     })
   })
 
-  it('classifies 1.2.x as backward-compatible but not recommended', () => {
-    expect(classifyOpenSpecCliVersion('1.2.0')).toMatchObject({
+  it('classifies 1.3.x as backward-compatible but not recommended', () => {
+    expect(classifyOpenSpecCliVersion('1.3.0')).toMatchObject({
       status: 'legacy-compatible',
       supported: true,
       recommended: false,
@@ -33,18 +33,18 @@ describe('openspec CLI compatibility law', () => {
     })
   })
 
-  it('blocks versions outside the 3.x accepted range', () => {
-    expect(classifyOpenSpecCliVersion('1.1.1')).toMatchObject({
+  it('blocks versions outside the 4.x accepted range', () => {
+    expect(classifyOpenSpecCliVersion('1.2.0')).toMatchObject({
       status: 'unsupported',
       supported: false,
       blocksCoreInteractions: true,
     })
-    expect(classifyOpenSpecCliVersion('1.4.0')).toMatchObject({
+    expect(classifyOpenSpecCliVersion('1.5.0')).toMatchObject({
       status: 'unsupported',
       supported: false,
       blocksCoreInteractions: true,
     })
-    expect(classifyOpenSpecCliVersion('1.4.0').message).toContain(OPENSPEC_CLI_ACCEPTED_RANGE)
+    expect(classifyOpenSpecCliVersion('1.5.0').message).toContain(OPENSPEC_CLI_ACCEPTED_RANGE)
   })
 
   it('blocks unknown versions', () => {

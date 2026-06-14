@@ -1,13 +1,13 @@
-export const OPENSPECUI_TARGET_MAJOR = 3
-export const OPENSPEC_CLI_TARGET_SERIES = '1.3'
-export const OPENSPEC_CLI_LEGACY_SERIES = '1.2'
-export const OPENSPEC_CLI_MIN_VERSION = '1.2.0'
-export const OPENSPEC_CLI_TARGET_MIN_VERSION = '1.3.0'
-export const OPENSPEC_CLI_NEXT_SERIES_MIN_VERSION = '1.4.0'
-export const OPENSPEC_CLI_ACCEPTED_RANGE = '>=1.2.0 <1.4.0'
-export const OPENSPEC_CLI_RECOMMENDED_RANGE = '>=1.3.0 <1.4.0'
-export const OPENSPEC_CLI_LEGACY_RANGE = '>=1.2.0 <1.3.0'
-export const OPENSPEC_CLI_REFERENCE_TAG_PATTERN = 'v1.3.*'
+export const OPENSPECUI_TARGET_MAJOR = 4
+export const OPENSPEC_CLI_TARGET_SERIES = '1.4'
+export const OPENSPEC_CLI_LEGACY_SERIES = '1.3'
+export const OPENSPEC_CLI_MIN_VERSION = '1.3.0'
+export const OPENSPEC_CLI_TARGET_MIN_VERSION = '1.4.0'
+export const OPENSPEC_CLI_NEXT_SERIES_MIN_VERSION = '1.5.0'
+export const OPENSPEC_CLI_ACCEPTED_RANGE = '>=1.3.0 <1.5.0'
+export const OPENSPEC_CLI_RECOMMENDED_RANGE = '>=1.4.0 <1.5.0'
+export const OPENSPEC_CLI_LEGACY_RANGE = '>=1.3.0 <1.4.0'
+export const OPENSPEC_CLI_REFERENCE_TAG_PATTERN = 'v1.4.*'
 
 export interface OpenSpecCliVersion {
   major: number

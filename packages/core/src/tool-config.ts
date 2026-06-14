@@ -167,6 +167,13 @@ export const AI_TOOLS: ToolConfig[] = [
     successLabel: 'Kilo Code',
     skillsDir: '.kilocode',
   },
+  {
+    name: 'Kimi CLI',
+    value: 'kimi',
+    available: true,
+    successLabel: 'Kimi CLI',
+    skillsDir: '.kimi',
+  },
   { name: 'Kiro', value: 'kiro', available: true, successLabel: 'Kiro', skillsDir: '.kiro' },
   {
     name: 'OpenCode',
@@ -183,6 +190,13 @@ export const AI_TOOLS: ToolConfig[] = [
     available: true,
     successLabel: 'Lingma',
     skillsDir: '.lingma',
+  },
+  {
+    name: 'Mistral Vibe',
+    value: 'vibe',
+    available: true,
+    successLabel: 'Mistral Vibe',
+    skillsDir: '.vibe',
   },
   {
     name: 'Qwen Code',

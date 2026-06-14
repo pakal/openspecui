@@ -28,8 +28,10 @@ describe('getDetectedProjectTools', () => {
     expect(getAllToolIds()).not.toContain('agents')
   })
 
-  it('includes OpenSpec CLI 1.3 tool ids', () => {
-    expect(getAllToolIds()).toEqual(expect.arrayContaining(['bob', 'forgecode', 'junie', 'lingma']))
+  it('includes OpenSpec CLI 1.4 tool ids', () => {
+    expect(getAllToolIds()).toEqual(
+      expect.arrayContaining(['bob', 'forgecode', 'junie', 'lingma', 'kimi', 'vibe'])
+    )
   })
 
   it('detects project-local tool directories only', async () => {

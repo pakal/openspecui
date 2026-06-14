@@ -52,7 +52,7 @@ export const en = {
     appOffSummary: 'Start the local backend and serve the local web UI from this machine.',
     exportLabel: 'Static export',
     exportSummary: 'Generate a deployable snapshot for docs hosting or offline review.',
-    compatibility: 'OpenSpecUI 3.x targets OpenSpec CLI 1.3.x and supports 1.2.x projects.',
+    compatibility: 'OpenSpecUI 4.x targets OpenSpec CLI 1.4.x and supports 1.3.x projects.',
   },
   modes: {
     title: 'Choose the right surface',
