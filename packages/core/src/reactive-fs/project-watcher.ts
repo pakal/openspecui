@@ -1,6 +1,7 @@
 import type { AsyncSubscription, Event } from '@parcel/watcher'
 import { existsSync, lstatSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { isPathInsideOrEqual } from './path-inside.js'
 import { resolveRealPathThroughExistingAncestor } from './path-realpath.js'
 
 /**
@@ -346,7 +347,8 @@ export class ProjectWatcher {
     if (sub.watchChildren) {
       // 监听目录内容：事件路径是订阅目录的子路径
       // 例如：订阅 /foo，事件 /foo/bar/baz.txt 匹配
-      return eventPath.startsWith(sub.path + '/') || eventPath === sub.path
+      // Separator-agnostic so backslash paths match on Windows.
+      return isPathInsideOrEqual(sub.path, eventPath)
     } else {
       // 监听路径本身或其直接子项
       // 例如：订阅 /foo/bar.txt，事件 /foo/bar.txt 匹配

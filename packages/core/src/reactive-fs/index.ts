@@ -34,6 +34,9 @@
  * ```
  */
 
+// 路径工具
+export { isPathInsideOrEqual } from './path-inside.js'
+
 // 核心类
 export { ReactiveContext } from './reactive-context.js'
 export { ReactiveState, contextStorage, type ReactiveStateOptions } from './reactive-state.js'

@@ -130,3 +130,37 @@ describe('ProjectWatcher path liveness', () => {
     })
   })
 })
+
+describe('ProjectWatcher.matchPath (separator-agnostic)', () => {
+  // matchPath compares native filesystem paths; on Windows those use `\`, so the
+  // host-independent way to cover the Windows regression is to drive the private
+  // method with synthetic backslash event/subscription paths.
+  function matchPath(eventPath: string, subPath: string, watchChildren: boolean): boolean {
+    const watcher = new ProjectWatcher(tmpdir())
+    const invoke = (
+      watcher as unknown as {
+        matchPath: (
+          event: { type: 'update'; path: string },
+          sub: { path: string; watchChildren: boolean }
+        ) => boolean
+      }
+    ).matchPath.bind(watcher)
+    return invoke({ type: 'update', path: eventPath }, { path: subPath, watchChildren })
+  }
+
+  it('matches a child event under a watchChildren subscription (Windows paths)', () => {
+    expect(matchPath('C:\\proj\\openspec\\config.yaml', 'C:\\proj', true)).toBe(true)
+  })
+
+  it('matches a child event under a watchChildren subscription (POSIX paths)', () => {
+    expect(matchPath('/proj/openspec/config.yaml', '/proj', true)).toBe(true)
+  })
+
+  it('matches the subscribed directory itself', () => {
+    expect(matchPath('C:\\proj', 'C:\\proj', true)).toBe(true)
+  })
+
+  it('does not match a sibling directory sharing a string prefix', () => {
+    expect(matchPath('C:\\project-other\\x', 'C:\\proj', true)).toBe(false)
+  })
+})

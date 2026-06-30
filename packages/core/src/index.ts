@@ -153,6 +153,8 @@ export {
   getWatcherRuntimeStatus,
   // Watcher pool management (based on @parcel/watcher)
   initWatcherPool,
+  // Separator-agnostic path containment (Windows-safe)
+  isPathInsideOrEqual,
   isWatcherPoolInitialized,
   reactiveExists,
   reactiveReadDir,

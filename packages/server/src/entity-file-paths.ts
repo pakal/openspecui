@@ -1,13 +1,13 @@
 import {
   getOpsxEntityRootRelativePath,
+  isPathInsideOrEqual,
   normalizeOpsxEntityPath,
   type OpsxEntityStage,
 } from '@openspecui/core'
 import { resolve } from 'node:path'
 
 function ensureInsideRoot(rootPath: string, candidatePath: string): void {
-  if (candidatePath === rootPath) return
-  if (!candidatePath.startsWith(rootPath + '/')) {
+  if (!isPathInsideOrEqual(rootPath, candidatePath)) {
     throw new Error('Resolved path escaped entity root.')
   }
 }

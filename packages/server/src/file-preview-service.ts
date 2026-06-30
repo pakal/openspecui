@@ -1,6 +1,7 @@
 import {
   inferFileMime,
   inferFilePreviewKind,
+  isPathInsideOrEqual,
   type FilePreviewKind,
   type OpsxEntityStage,
 } from '@openspecui/core'
@@ -170,7 +171,7 @@ export class FilePreviewService {
     const normalized = stripLeadingSlash(requestPath)
     if (session.previewKind === 'html') {
       const absolutePath = resolve(session.directoryPath, normalized)
-      if (!absolutePath.startsWith(session.directoryPath + '/')) {
+      if (!isPathInsideOrEqual(session.directoryPath, absolutePath)) {
         return null
       }
       if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
@@ -185,7 +186,7 @@ export class FilePreviewService {
     if (normalized.startsWith('resource/')) {
       const resourcePath = normalized.slice('resource/'.length)
       const absolutePath = resolve(session.directoryPath, resourcePath)
-      if (!absolutePath.startsWith(session.directoryPath + '/')) {
+      if (!isPathInsideOrEqual(session.directoryPath, absolutePath)) {
         return null
       }
       if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
@@ -202,7 +203,7 @@ export class FilePreviewService {
       return null
     }
     const absolutePath = resolve(this.previewAssetsDir, assetName)
-    if (!absolutePath.startsWith(resolve(this.previewAssetsDir) + '/')) {
+    if (!isPathInsideOrEqual(resolve(this.previewAssetsDir), absolutePath)) {
       return null
     }
     if (!existsSync(absolutePath) || !statSync(absolutePath).isFile()) {
