@@ -8,13 +8,13 @@ OpenSpecUI is a web interface for OpenSpec workflows (live mode + static export)
 
 | OpenSpecUI        | OpenSpec CLI line                                     |
 | ----------------- | ----------------------------------------------------- |
-| `@latest` / `@^4` | current: `>=1.4.0 <1.5.0`; accepted: `>=1.3.0 <1.5.0` |
+| `@latest` / `@^4` | current: `>=1.4.0 <1.6.0`; accepted: `>=1.3.0 <1.6.0` |
 | `@^3`             | `>=1.3.0 <1.4.0`                                      |
 | `@^2`             | `>=1.2.0 <1.3.0`                                      |
 | `@^1`             | `>=1.0.0 <1.2.0`                                      |
 
 OpenSpecUI major versions track OpenSpec CLI minor lines. OpenSpecUI 4.x targets OpenSpec CLI
-1.4.x and remains backward-compatible with 1.3.x projects. OpenSpecUI 3.x does not forward-support
+1.4.x and 1.5.x, and remains backward-compatible with 1.3.x projects. OpenSpecUI 3.x does not forward-support
 OpenSpec CLI 1.4.x.
 
 Legacy docs:
@@ -38,11 +38,11 @@ openspecui
 
 Default URL: `http://localhost:3100`.
 
-## OpenSpec 1.4 Notes
+## OpenSpec 1.5 Notes
 
-- OpenSpecUI 4.x targets OpenSpec CLI `>=1.4.0 <1.5.0`.
+- OpenSpecUI 4.x targets OpenSpec CLI `>=1.4.0 <1.6.0`. The 1.5 line is the target; 1.4 remains current/recommended.
 - OpenSpec CLI `>=1.3.0 <1.4.0` is accepted as a legacy-compatible runtime for 4.x.
-- If your CLI is outside `>=1.3.0 <1.5.0`, UI shows `OpenSpec CLI Required` and blocks core interactions until upgraded.
+- If your CLI is outside `>=1.3.0 <1.6.0`, UI shows `OpenSpec CLI Required` and blocks core interactions until upgraded.
 - OpenSpec profile/workflow sync can be inspected from **Settings → OpenSpec Profile & Sync**.
 - OpenSpec CLI 1.4 adds Kimi CLI and Mistral Vibe (skills-only tools), case-insensitive requirement header parsing, clearer validation hints, and makes `/opsx:sync` part of the default `core` profile.
 
