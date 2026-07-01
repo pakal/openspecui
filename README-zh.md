@@ -8,13 +8,14 @@ OpenSpecUI 是 OpenSpec 工作流的 Web 界面（动态模式 + 静态导出）
 
 | OpenSpecUI        | OpenSpec CLI 线                                |
 | ----------------- | ---------------------------------------------- |
-| `@latest` / `@^4` | 当前：`>=1.4.0 <1.5.0`；接受：`>=1.3.0 <1.5.0` |
+| `@latest` / `@^5` | 当前：`>=1.5.0 <1.6.0`；接受：`>=1.4.0 <1.6.0` |
+| `@^4`             | `>=1.4.0 <1.5.0`                               |
 | `@^3`             | `>=1.3.0 <1.4.0`                               |
 | `@^2`             | `>=1.2.0 <1.3.0`                               |
 | `@^1`             | `>=1.0.0 <1.2.0`                               |
 
-OpenSpecUI 的 major 版本跟随 OpenSpec CLI 的 minor 线。OpenSpecUI 4.x 面向 OpenSpec CLI
-1.4.x，并向后兼容 1.3.x 项目。OpenSpecUI 3.x 不向前兼容 OpenSpec CLI 1.4.x。
+OpenSpecUI 的 major 版本跟随 OpenSpec CLI 的 minor 线。OpenSpecUI 5.x 面向 OpenSpec CLI
+1.5.x，并向后兼容 1.4.x 项目。OpenSpecUI 4.x 不向前兼容 OpenSpec CLI 1.5.x。
 
 历史文档：
 
@@ -37,13 +38,13 @@ openspecui
 
 默认地址：`http://localhost:3100`。
 
-## OpenSpec 1.4 说明
+## OpenSpec 1.5 说明
 
-- OpenSpecUI 4.x 面向 OpenSpec CLI `>=1.4.0 <1.5.0`。
-- OpenSpec CLI `>=1.3.0 <1.4.0` 在 4.x 中作为 legacy-compatible runtime 被接受。
-- 如果 CLI 不在 `>=1.3.0 <1.5.0` 范围内，界面会显示 `OpenSpec CLI Required` 并阻断核心操作，直到升级。
+- OpenSpecUI 5.x 面向 OpenSpec CLI `>=1.5.0 <1.6.0`。
+- OpenSpec CLI `>=1.4.0 <1.5.0` 在 5.x 中作为 legacy-compatible runtime 被接受。
+- 如果 CLI 不在 `>=1.4.0 <1.6.0` 范围内，界面会显示 `OpenSpec CLI Required` 并阻断核心操作，直到升级。
 - 可在 **Settings → OpenSpec Profile & Sync** 查看 profile/workflow 同步状态。
-- OpenSpec CLI 1.4 新增 Kimi CLI 与 Mistral Vibe（skills-only 工具），要求标题解析改为大小写不敏感，优化校验提示，并把 `/opsx:sync` 纳入默认 `core` profile。
+- OpenSpec CLI 1.4（legacy-compatible 线）新增 Kimi CLI 与 Mistral Vibe（skills-only 工具），要求标题解析改为大小写不敏感，优化校验提示，并把 `/opsx:sync` 纳入默认 `core` profile。
 
 升级 CLI：
 
