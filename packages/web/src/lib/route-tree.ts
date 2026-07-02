@@ -41,7 +41,7 @@ export function createRouteTree(rootRoute: AnyRootRoute, opts?: { includeTermina
       component: GitCommitViewRoute,
     }),
     createRoute({ getParentRoute: () => rootRoute, path: '/specs', component: SpecList }),
-    createRoute({ getParentRoute: () => rootRoute, path: '/specs/$specId', component: SpecView }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/specs/$', component: SpecView }),
     createRoute({ getParentRoute: () => rootRoute, path: '/changes', component: ChangeList }),
     createRoute({
       getParentRoute: () => rootRoute,

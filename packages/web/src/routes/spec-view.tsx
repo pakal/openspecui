@@ -18,7 +18,9 @@ import { AlertCircle, AlertTriangle, ArrowLeft, CheckCircle, FileText, Info } fr
 import { useMemo, useRef } from 'react'
 
 export function SpecView() {
-  const { specId } = useParams({ from: '/specs/$specId' })
+  // Splat route (`/specs/$`) so nested spec ids (`topic/feature`) survive the URL.
+  const { _splat } = useParams({ from: '/specs/$' })
+  const specId = _splat ?? ''
   const location = useLocation()
   const handoff = readSharedElementHandoffState(location.state)
   const sharedDescriptor = useMemo(() => ({ family: 'specs', entityId: specId }) as const, [specId])

@@ -14,9 +14,17 @@ function createRuntime(onReadDocument?: OnReadDocumentHookV1): HookRuntime {
 
 function createAdapter(): Pick<
   OpenSpecAdapter,
-  'readSpecRaw' | 'readChangeFiles' | 'readArchivedChangeRaw' | 'readEntityDetail'
+  | 'readSpecRaw'
+  | 'resolveSpecFile'
+  | 'readChangeFiles'
+  | 'readArchivedChangeRaw'
+  | 'readEntityDetail'
 > {
   return {
+    resolveSpecFile: vi.fn().mockResolvedValue({
+      absolutePath: '/project/openspec/specs/cli/spec.md',
+      relativePath: 'openspec/specs/cli/spec.md',
+    }),
     readSpecRaw: vi.fn().mockResolvedValue(`# CLI Spec
 
 ## Purpose

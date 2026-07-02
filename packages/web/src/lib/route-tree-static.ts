@@ -23,7 +23,7 @@ export function createStaticRouteTree(rootRoute: AnyRootRoute) {
     createRoute({ getParentRoute: () => rootRoute, path: '/dashboard', component: Dashboard }),
     createRoute({ getParentRoute: () => rootRoute, path: '/config', component: Config }),
     createRoute({ getParentRoute: () => rootRoute, path: '/specs', component: SpecList }),
-    createRoute({ getParentRoute: () => rootRoute, path: '/specs/$specId', component: SpecView }),
+    createRoute({ getParentRoute: () => rootRoute, path: '/specs/$', component: SpecView }),
     createRoute({ getParentRoute: () => rootRoute, path: '/changes', component: ChangeList }),
     createRoute({
       getParentRoute: () => rootRoute,

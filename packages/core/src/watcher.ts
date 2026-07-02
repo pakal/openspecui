@@ -144,7 +144,10 @@ export class OpenSpecWatcher extends EventEmitter {
     try {
       const watcher = watch(dir, { recursive: true }, (eventType, filename) => {
         if (filename) {
-          callback(filename, eventType as 'rename' | 'change')
+          // Normalize to posix separators so callers' `/`-based matching also
+          // works on Windows, where fs.watch reports backslash-separated paths.
+          const normalized = filename.toString().replace(/\\/g, '/')
+          callback(normalized, eventType as 'rename' | 'change')
         }
       })
 

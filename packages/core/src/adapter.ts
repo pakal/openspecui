@@ -1,5 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { inferFileMime, inferFilePreviewKind, isTextLikeFile } from './file-preview.js'
 import {
   buildOpsxEntityDetail,
@@ -96,26 +96,89 @@ export class OpenSpecAdapter {
   }
 
   // =====================
+  // Spec layout resolution
+  // =====================
+
+  /**
+   * Enumerate every spec under specs/, supporting both the canonical
+   * `specs/<id>/spec.md` layout and the nested `specs/<topic>/<feature>.md`
+   * layout (multiple specs per topic directory). Reactive: each visited
+   * directory is read through the reactive layer so the UI refreshes on change.
+   */
+  private async enumerateSpecs(): Promise<Array<{ id: string; absPath: string }>> {
+    return this.collectSpecFiles(this.specsDir, '')
+  }
+
+  /** Recursively collect spec files, deriving each id from its path relative to specs/. */
+  private async collectSpecFiles(
+    dir: string,
+    relPrefix: string
+  ): Promise<Array<{ id: string; absPath: string }>> {
+    const entries = await reactiveReadDir(dir)
+    const collected: Array<{ id: string; absPath: string }> = []
+    for (const entry of entries) {
+      const absPath = join(dir, entry)
+      const statInfo = await reactiveStat(absPath)
+      if (statInfo?.isDirectory) {
+        const childPrefix = relPrefix ? `${relPrefix}/${entry}` : entry
+        collected.push(...(await this.collectSpecFiles(absPath, childPrefix)))
+      } else if (statInfo?.isFile && entry.endsWith('.md')) {
+        // `spec.md` keeps the canonical id (= its directory); any other markdown
+        // file is a nested spec whose id includes the file stem.
+        if (entry === 'spec.md') {
+          if (relPrefix) collected.push({ id: relPrefix, absPath })
+        } else {
+          const stem = entry.slice(0, -'.md'.length)
+          const id = relPrefix ? `${relPrefix}/${stem}` : stem
+          collected.push({ id, absPath })
+        }
+      }
+    }
+    return collected
+  }
+
+  /**
+   * Resolve the on-disk file for a spec id. Prefers the canonical
+   * `specs/<id>/spec.md`, then falls back to the nested `specs/<id>.md`.
+   * Returns absolute + openspec-relative (posix-separated) paths, or null if neither exists.
+   */
+  async resolveSpecFile(
+    specId: string
+  ): Promise<{ absolutePath: string; relativePath: string } | null> {
+    const canonicalAbs = join(this.specsDir, specId, 'spec.md')
+    const canonicalStat = await reactiveStat(canonicalAbs)
+    if (canonicalStat?.isFile) {
+      return { absolutePath: canonicalAbs, relativePath: `openspec/specs/${specId}/spec.md` }
+    }
+    const nestedAbs = join(this.specsDir, `${specId}.md`)
+    const nestedStat = await reactiveStat(nestedAbs)
+    if (nestedStat?.isFile) {
+      return { absolutePath: nestedAbs, relativePath: `openspec/specs/${specId}.md` }
+    }
+    return null
+  }
+
+  // =====================
   // List operations
   // =====================
 
   async listSpecs(): Promise<string[]> {
-    return reactiveReadDir(this.specsDir, { directoriesOnly: true })
+    const specs = await this.enumerateSpecs()
+    return specs.map((spec) => spec.id)
   }
 
   /**
-   * List specs with metadata (id, name, and time info)
-   * Only returns specs that have valid spec.md
+   * List specs with metadata (id, name, and time info), across both the canonical
+   * and nested spec layouts. Only returns specs whose markdown parses.
    * Sorted by updatedAt descending (most recent first)
    */
   async listSpecsWithMeta(): Promise<SpecMeta[]> {
-    const ids = await this.listSpecs()
+    const entries = await this.enumerateSpecs()
     const results = await Promise.all(
-      ids.map(async (id) => {
+      entries.map(async ({ id, absPath }) => {
         const spec = await this.readSpec(id)
         if (!spec) return null
-        const specPath = join(this.specsDir, id, 'spec.md')
-        const timeInfo = await this.getFileTimeInfo(specPath)
+        const timeInfo = await this.getFileTimeInfo(absPath)
         return {
           id,
           name: spec.name,
@@ -229,8 +292,9 @@ export class OpenSpecAdapter {
   }
 
   async readSpecRaw(specId: string): Promise<string | null> {
-    const specPath = join(this.specsDir, specId, 'spec.md')
-    return reactiveReadFile(specPath)
+    const resolved = await this.resolveSpecFile(specId)
+    if (!resolved) return null
+    return reactiveReadFile(resolved.absolutePath)
   }
 
   async readChange(changeId: string): Promise<Change | null> {
@@ -379,16 +443,15 @@ export class OpenSpecAdapter {
     }
   }
 
-  /** Read delta specs from a specs directory */
+  /** Read delta specs from a change's specs directory (canonical or nested layout). */
   private async readDeltaSpecs(specsDir: string): Promise<DeltaSpec[]> {
-    const specIds = await reactiveReadDir(specsDir, { directoriesOnly: true })
+    const specFiles = await this.collectSpecFiles(specsDir, '')
     const deltaSpecs: DeltaSpec[] = []
 
-    for (const specId of specIds) {
-      const specPath = join(specsDir, specId, 'spec.md')
-      const content = await reactiveReadFile(specPath)
+    for (const { id, absPath } of specFiles) {
+      const content = await reactiveReadFile(absPath)
       if (content) {
-        deltaSpecs.push({ specId, content })
+        deltaSpecs.push({ specId: id, content })
       }
     }
 
@@ -447,6 +510,20 @@ export class OpenSpecAdapter {
   // =====================
 
   async writeSpec(specId: string, content: string): Promise<void> {
+    const resolved = await this.resolveSpecFile(specId)
+    if (resolved) {
+      // Write back to wherever the spec already lives (canonical or nested).
+      await writeFile(resolved.absolutePath, content, 'utf-8')
+      return
+    }
+    // New spec: a slash in the id means the nested `<id>.md` layout; otherwise
+    // default to the canonical `<id>/spec.md` layout.
+    if (specId.includes('/')) {
+      const nestedAbs = join(this.specsDir, `${specId}.md`)
+      await mkdir(dirname(nestedAbs), { recursive: true })
+      await writeFile(nestedAbs, content, 'utf-8')
+      return
+    }
     const specDir = join(this.specsDir, specId)
     await mkdir(specDir, { recursive: true })
     await writeFile(join(specDir, 'spec.md'), content, 'utf-8')

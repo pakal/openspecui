@@ -831,8 +831,8 @@ export function Dashboard() {
           return (
             <VTLink
               key={spec.id}
-              to="/specs/$specId"
-              params={{ specId: spec.id }}
+              to="/specs/$"
+              params={{ _splat: spec.id }}
               state={(prev) => ({
                 ...prev,
                 __vtHandoff: {

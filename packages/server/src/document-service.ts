@@ -83,6 +83,13 @@ export class DocumentService {
     const source = await this.adapter.readSpecRaw(specId)
     if (source === null) return null
 
+    // Resolve the real on-disk file so nested `specs/<topic>/<feature>.md` specs
+    // report accurate paths; fall back to the canonical layout when unresolved.
+    const resolved = await this.adapter.resolveSpecFile(specId)
+    const relativePath = resolved?.relativePath ?? `openspec/specs/${specId}/spec.md`
+    const absolutePath =
+      resolved?.absolutePath ?? join(this.projectDir, 'openspec', 'specs', specId, 'spec.md')
+
     return this.processDocument({
       consumer,
       mode,
@@ -90,8 +97,8 @@ export class DocumentService {
         stage: 'main',
         kind: 'spec',
         specId,
-        relativePath: `openspec/specs/${specId}/spec.md`,
-        absolutePath: join(this.projectDir, 'openspec', 'specs', specId, 'spec.md'),
+        relativePath,
+        absolutePath,
       },
       source,
     })
