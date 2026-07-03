@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { NotificationEntryButton } from '../notifications/notification-entry-button'
 import { AreaNav } from './area-nav'
 import { navItems, settingsItem } from './nav-items'
+import { ProjectSwitcher } from './project-switcher'
 import { StatusIndicator } from './status-bar'
 import { TopLayerEntryButton } from './top-layer-entry-button'
 
@@ -34,7 +35,11 @@ export function MobileHeader() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <span className="font-nav text-[12px] tracking-[0.04em]">{pageTitle}</span>
+          <ProjectSwitcher
+            fallback={
+              <span className="font-nav text-[12px] tracking-[0.04em]">{pageTitle}</span>
+            }
+          />
         </div>
         <div className="flex items-center gap-2">
           <TopLayerEntryButton

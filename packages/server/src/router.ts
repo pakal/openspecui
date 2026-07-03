@@ -13,9 +13,13 @@ import type {
   OpenSpecAdapter,
   OpenSpecWatcher,
   OpsxKernel,
+  ParentProjectContext,
+  ProjectsOverview,
 } from '@openspecui/core'
 import {
   BatchTranslateInputSchema,
+  discoverProjectRoots,
+  isPathInsideOrEqual,
   classifyStoreCliOutput,
   CodeEditorThemeSchema,
   DashboardConfigSchema,
@@ -75,7 +79,7 @@ import { SearchQuerySchema, type SearchQuery } from '@openspecui/search'
 import { initTRPC } from '@trpc/server'
 import { observable } from '@trpc/server/observable'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve, sep } from 'node:path'
+import { basename, dirname, join, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { createCliStreamObservable } from './cli-stream-observable.js'
 import type { Ct2ModelAssetService } from './ct2-model-asset-service.js'
@@ -134,6 +138,7 @@ export interface Context {
   localCt2ModelAssetService: Ct2ModelAssetService
   localLlamaModelAssetService: LlamaModelAssetService
   gitWorktreeHandoff?: GitWorktreeHandoffService
+  parentContext?: ParentProjectContext
   watcher?: OpenSpecWatcher
   projectDir: string
 }
@@ -2403,6 +2408,90 @@ export const dashboardRouter = router({
   }),
 })
 
+/**
+ * Build the project-switcher overview from the launch context.
+ *
+ * Re-reads `discoverProjectRoots` (plain-fs) on every call so a client that
+ * remounts/reloads sees the current set of sibling projects. In single-project
+ * mode (`ctx.parentContext` absent) it returns just the current project so the
+ * dropdown degrades to a single, self-referential entry.
+ */
+async function buildProjectsOverview(ctx: Context): Promise<ProjectsOverview> {
+  const currentProjectPath = resolve(ctx.projectDir)
+
+  if (!ctx.parentContext) {
+    const name = basename(currentProjectPath)
+    return {
+      parentMode: false,
+      parentRoot: null,
+      currentProjectPath,
+      currentProjectName: name,
+      projects: [{ name, path: currentProjectPath, hasOpenspec: true }],
+    }
+  }
+
+  const discovery = await discoverProjectRoots(ctx.parentContext.parentRoot)
+  return {
+    parentMode: discovery.isParentMode,
+    parentRoot: discovery.parentRoot,
+    currentProjectPath,
+    currentProjectName: basename(currentProjectPath),
+    projects: discovery.projects,
+  }
+}
+
+/**
+ * Validate a switch target: it must be inside the launch root AND a currently
+ * discovered child that owns `openspec/`. Returns `null` for anything else so
+ * the mutation never spawns a server for an arbitrary path.
+ */
+async function resolveProjectSwitchTarget(options: {
+  parentRoot: string
+  targetPath: string
+}): Promise<{ path: string } | null> {
+  const parentRoot = resolve(options.parentRoot)
+  const targetPath = resolve(options.targetPath)
+
+  if (!isPathInsideOrEqual(parentRoot, targetPath)) {
+    return null
+  }
+
+  const discovery = await discoverProjectRoots(parentRoot)
+  const match = discovery.projects.find(
+    (project) => project.path === targetPath && project.hasOpenspec
+  )
+
+  return match ? { path: match.path } : null
+}
+
+export const projectsRouter = router({
+  overview: publicProcedure.query(async ({ ctx }): Promise<ProjectsOverview> => {
+    return buildProjectsOverview(ctx)
+  }),
+
+  switchProject: publicProcedure
+    .input(z.object({ path: z.string().min(1) }))
+    .mutation(async ({ ctx, input }): Promise<GitWorktreeHandoff> => {
+      if (!ctx.parentContext) {
+        throw new Error('Project switching is unavailable in single-project mode.')
+      }
+      if (!ctx.gitWorktreeHandoff) {
+        throw new Error('Project handoff is unavailable in this runtime.')
+      }
+
+      const target = await resolveProjectSwitchTarget({
+        parentRoot: ctx.parentContext.parentRoot,
+        targetPath: input.path,
+      })
+
+      if (!target) {
+        throw new Error('Project not found, or the selected folder is not an OpenSpec project.')
+      }
+
+      return ctx.gitWorktreeHandoff.ensureWorktreeServer({ targetPath: target.path })
+    }),
+})
+
 export const gitRouter = router({
   overview: publicProcedure.query(async ({ ctx }): Promise<GitWorktreeOverview> => {
     return buildGitWorktreeOverview({ projectDir: ctx.projectDir })
@@ -2613,6 +2702,7 @@ export const storesRouter = router({
 export const appRouter = router({
   dashboard: dashboardRouter,
   git: gitRouter,
+  projects: projectsRouter,
   spec: specRouter,
   change: changeRouter,
   archive: archiveRouter,

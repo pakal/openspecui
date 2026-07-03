@@ -14,6 +14,15 @@ export { OpenSpecAdapter, type ArchiveMeta, type ChangeMeta, type SpecMeta } fro
 // Markdown parser for spec and change documents
 export { MarkdownParser } from './parser.js'
 
+// Launch-directory scan: single-project vs parent mode with child projects
+export {
+  discoverProjectRoots,
+  type ParentProjectContext,
+  type ProjectDiscovery,
+  type ProjectRoot,
+  type ProjectsOverview,
+} from './project-discovery.js'
+
 export {
   parseMarkdownFacts,
   toMarkdownFactKind,

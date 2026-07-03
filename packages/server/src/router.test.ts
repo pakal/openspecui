@@ -1326,3 +1326,139 @@ describe('appRouter', () => {
     })
   })
 })
+
+describe('projectsRouter (multi-project switcher)', () => {
+  async function makeOpenspecProject(parentRoot: string, name: string): Promise<string> {
+    const dir = resolvePath(parentRoot, name)
+    await mkdir(resolvePath(dir, 'openspec'), { recursive: true })
+    return dir
+  }
+
+  async function makePlainFolder(parentRoot: string, name: string): Promise<string> {
+    const dir = resolvePath(parentRoot, name)
+    await mkdir(dir, { recursive: true })
+    return dir
+  }
+
+  function createParentModeCaller(options: {
+    projectDir: string
+    parentRoot: string
+    gitWorktreeHandoff?: Context['gitWorktreeHandoff']
+  }) {
+    const ctx = createMockContext(createMockAdapter(), {
+      projectDir: options.projectDir,
+      gitWorktreeHandoff: options.gitWorktreeHandoff,
+    })
+    // parentContext.projects is unused by the router (both procedures re-discover
+    // from the filesystem); the empty list keeps the fixture minimal.
+    const parentContext = { parentRoot: options.parentRoot, projects: [] }
+    return appRouter.createCaller({ ...ctx, parentContext })
+  }
+
+  it('overview lists discovered children with their openspec flags in parent mode', async () => {
+    const parentRoot = await createTempProjectDir('openspecui-projects-parent-')
+    const alpha = await makeOpenspecProject(parentRoot, 'alpha')
+    await makeOpenspecProject(parentRoot, 'bravo')
+    await makePlainFolder(parentRoot, 'charlie')
+
+    const caller = createParentModeCaller({ projectDir: alpha, parentRoot })
+    const overview = await caller.projects.overview()
+
+    expect(overview.parentMode).toBe(true)
+    expect(overview.parentRoot).toBe(resolvePath(parentRoot))
+    expect(overview.currentProjectPath).toBe(resolvePath(alpha))
+    expect(overview.currentProjectName).toBe('alpha')
+    const openspecByName = Object.fromEntries(
+      overview.projects.map((project) => [project.name, project.hasOpenspec])
+    )
+    expect(openspecByName).toEqual({ alpha: true, bravo: true, charlie: false })
+  })
+
+  it('overview returns a single self-referential entry in single-project mode', async () => {
+    const projectDir = await createTempProjectDir('openspecui-projects-single-')
+
+    const caller = createCaller(createMockAdapter(), { projectDir })
+    const overview = await caller.projects.overview()
+
+    expect(overview.parentMode).toBe(false)
+    expect(overview.parentRoot).toBeNull()
+    expect(overview.projects).toHaveLength(1)
+    expect(overview.projects[0]?.hasOpenspec).toBe(true)
+    expect(overview.currentProjectPath).toBe(resolvePath(projectDir))
+  })
+
+  it('switchProject hands off to a discovered openspec sibling', async () => {
+    const parentRoot = await createTempProjectDir('openspecui-projects-switch-')
+    const alpha = await makeOpenspecProject(parentRoot, 'alpha')
+    const bravo = await makeOpenspecProject(parentRoot, 'bravo')
+
+    const ensureWorktreeServer = vi.fn().mockResolvedValue({
+      projectDir: resolvePath(bravo),
+      serverUrl: 'http://127.0.0.1:3200',
+    })
+    const caller = createParentModeCaller({
+      projectDir: alpha,
+      parentRoot,
+      gitWorktreeHandoff: { ensureWorktreeServer },
+    })
+
+    const handoff = await caller.projects.switchProject({ path: bravo })
+
+    expect(ensureWorktreeServer).toHaveBeenCalledWith({ targetPath: resolvePath(bravo) })
+    expect(handoff).toEqual({
+      projectDir: resolvePath(bravo),
+      serverUrl: 'http://127.0.0.1:3200',
+    })
+  })
+
+  it('switchProject rejects a sibling folder without openspec/', async () => {
+    const parentRoot = await createTempProjectDir('openspecui-projects-reject-')
+    const alpha = await makeOpenspecProject(parentRoot, 'alpha')
+    const charlie = await makePlainFolder(parentRoot, 'charlie')
+
+    const ensureWorktreeServer = vi.fn()
+    const caller = createParentModeCaller({
+      projectDir: alpha,
+      parentRoot,
+      gitWorktreeHandoff: { ensureWorktreeServer },
+    })
+
+    await expect(caller.projects.switchProject({ path: charlie })).rejects.toThrow(
+      'Project not found, or the selected folder is not an OpenSpec project.'
+    )
+    expect(ensureWorktreeServer).not.toHaveBeenCalled()
+  })
+
+  it('switchProject rejects a path outside the launch root', async () => {
+    const parentRoot = await createTempProjectDir('openspecui-projects-outside-')
+    const alpha = await makeOpenspecProject(parentRoot, 'alpha')
+    // A genuine OpenSpec project, but located outside parentRoot (a separate temp root).
+    const outside = await createTempProjectDir('openspecui-projects-outside-target-')
+    await mkdir(resolvePath(outside, 'openspec'), { recursive: true })
+
+    const ensureWorktreeServer = vi.fn()
+    const caller = createParentModeCaller({
+      projectDir: alpha,
+      parentRoot,
+      gitWorktreeHandoff: { ensureWorktreeServer },
+    })
+
+    await expect(caller.projects.switchProject({ path: outside })).rejects.toThrow(
+      'Project not found, or the selected folder is not an OpenSpec project.'
+    )
+    expect(ensureWorktreeServer).not.toHaveBeenCalled()
+  })
+
+  it('switchProject is unavailable in single-project mode', async () => {
+    const projectDir = await createTempProjectDir('openspecui-projects-single-switch-')
+
+    const caller = createCaller(createMockAdapter(), {
+      projectDir,
+      gitWorktreeHandoff: { ensureWorktreeServer: vi.fn() },
+    })
+
+    await expect(caller.projects.switchProject({ path: projectDir })).rejects.toThrow(
+      'Project switching is unavailable in single-project mode.'
+    )
+  })
+})

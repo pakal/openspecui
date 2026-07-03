@@ -1,3 +1,4 @@
+import type { ParentProjectContext } from '@openspecui/core'
 import {
   startServer as serverStartServer,
   type GitWorktreeHandoffService,
@@ -38,6 +39,8 @@ export interface CLIOptions {
   corsOrigins?: string[]
   /** Optional handoff owner. Worker runtimes use this to delegate nested switches to their parent. */
   gitWorktreeHandoff?: GitWorktreeHandoffService
+  /** Parent-mode context (multi-project). Enables the project switcher and is forwarded to spawned siblings. */
+  parentContext?: ParentProjectContext
 }
 
 export interface RunningServer {
@@ -182,6 +185,7 @@ export async function startServer(options: CLIOptions = {}): Promise<RunningServ
       corsOrigins,
       previewAssetsDir: getPreviewAssetsDir(),
       gitWorktreeHandoff,
+      parentContext: options.parentContext,
     },
     setupStaticFiles
   )
@@ -191,6 +195,7 @@ export async function startServer(options: CLIOptions = {}): Promise<RunningServ
       currentProjectDir: projectDir,
       currentServerUrl: server.url,
       runtimeDir: __dirname,
+      parentContext: options.parentContext,
       createWorker: createWorktreeServerWorker,
     })
   }

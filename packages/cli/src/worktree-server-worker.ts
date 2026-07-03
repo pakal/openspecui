@@ -1,14 +1,19 @@
+import type { ParentProjectContext } from '@openspecui/core'
 import type { Worker } from 'node:worker_threads'
 
 export interface WorktreeServerStartOptions {
   projectDir: string
   port: number
   open: false
+  /** Parent-mode context, forwarded so a spawned sibling server also renders the switcher. */
+  parentContext?: ParentProjectContext
 }
 
 export interface WorktreeServerWorkerData {
   projectDir: string
   port: number
+  /** Parent-mode context threaded from the root manager into the spawned child. */
+  parentContext?: ParentProjectContext
 }
 
 export interface CreateWorktreeServerWorkerOptions {
@@ -56,5 +61,6 @@ export function buildWorktreeServerStartOptions(
     projectDir: data.projectDir,
     port: data.port,
     open: false,
+    parentContext: data.parentContext,
   }
 }

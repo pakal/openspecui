@@ -8,6 +8,7 @@ import {
   OPENSPECUI_RUNTIME_CAPABILITIES,
   isHostedBackendHealthResponse,
   type GitWorktreeHandoff,
+  type ParentProjectContext,
 } from '@openspecui/core'
 import type { SpawnCommandConfig } from './local-hosted-app-dev'
 import type {
@@ -38,6 +39,8 @@ interface WorktreeInstanceManagerOptions {
   currentProjectDir: string
   currentServerUrl: string
   runtimeDir: string
+  /** Parent-mode context forwarded to every spawned sibling server (multi-project switcher). */
+  parentContext?: ParentProjectContext
   createWorker?: WorktreeServerWorkerFactory
   readinessTimeoutMs?: number
   preferredPortStart?: number
@@ -200,11 +203,13 @@ export function createWorktreeServerLaunchPlan(options: {
   runtimeDir: string
   projectDir: string
   port: number
+  parentContext?: ParentProjectContext
   createWorker?: WorktreeServerWorkerFactory
 }): WorktreeServerLaunchPlan {
   const workerData = {
     projectDir: options.projectDir,
     port: options.port,
+    parentContext: options.parentContext,
   }
   const workspace = resolveLocalCliWorkspace(options.runtimeDir)
 
@@ -567,6 +572,7 @@ export function createWorktreeInstanceManager(
         runtimeDir: options.runtimeDir,
         projectDir: targetPath,
         port,
+        parentContext: options.parentContext,
         createWorker: options.createWorker,
       })
       const runtime = startWorktreeServerRuntime(plan)

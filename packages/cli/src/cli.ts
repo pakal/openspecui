@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { ConfigManager } from '@openspecui/core'
+import { ConfigManager, discoverProjectRoots } from '@openspecui/core'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -76,7 +76,20 @@ async function main(): Promise<void> {
       },
       async (argv) => {
         const rawDir = (argv['project-dir'] as string | undefined) || argv.dir || '.'
-        const projectDir = resolve(originalCwd, rawDir)
+        const launchDir = resolve(originalCwd, rawDir)
+
+        // Multi-project: when the launch dir has no openspec/ of its own, treat its
+        // children as candidate projects. Bind the first openspec/-bearing child by
+        // default and hand the parent context to the server so it renders the switcher.
+        const discovery = await discoverProjectRoots(launchDir)
+        const parentContext = discovery.isParentMode
+          ? { parentRoot: discovery.parentRoot, projects: discovery.projects }
+          : undefined
+        const projectDir =
+          discovery.isParentMode && discovery.defaultProjectPath
+            ? discovery.defaultProjectPath
+            : launchDir
+
         const useHostedApp = argv.app !== undefined
         const localVersion = getVersion()
 
@@ -113,6 +126,7 @@ async function main(): Promise<void> {
             port: argv.port,
             open: false,
             corsOrigins: hostedBaseUrl ? buildHostedCorsOrigins(hostedBaseUrl) : undefined,
+            parentContext,
           })
 
           if (server.port !== server.preferredPort) {

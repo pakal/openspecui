@@ -24,6 +24,7 @@ import {
   OpenSpecAdapter,
   OpenSpecWatcher,
   OpsxKernel,
+  type ParentProjectContext,
 } from '@openspecui/core'
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch'
 import { applyWSSHandler } from '@trpc/server/adapters/ws'
@@ -119,6 +120,8 @@ export interface ServerConfig {
   previewAssetsDir?: string
   /** Optional worktree handoff provider for runtimes that can spawn sibling instances */
   gitWorktreeHandoff?: GitWorktreeHandoffService
+  /** Optional parent-mode context (launch dir + sibling projects) for the project switcher */
+  parentContext?: ParentProjectContext
   /** Optional path overrides for isolated runtimes and tests */
   runtimePaths?: {
     globalSettingsPath?: string
@@ -420,6 +423,7 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
         localCt2ModelAssetService,
         localLlamaModelAssetService,
         gitWorktreeHandoff: config.gitWorktreeHandoff,
+        parentContext: config.parentContext,
         watcher,
         projectDir: config.projectDir,
       }),
@@ -448,6 +452,7 @@ export function createServer(config: ServerConfig & { kernel: OpsxKernel }) {
     localCt2ModelAssetService,
     localLlamaModelAssetService,
     gitWorktreeHandoff: config.gitWorktreeHandoff,
+    parentContext: config.parentContext,
     watcher,
     projectDir: config.projectDir,
   })

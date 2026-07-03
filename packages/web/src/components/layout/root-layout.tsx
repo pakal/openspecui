@@ -1,6 +1,7 @@
 import { CliHealthGate } from '@/components/cli-health-gate'
 import { GlobalArchiveModal } from '@/components/global-archive-modal'
 import { NotificationToastViewport } from '@/components/notifications/notification-toast'
+import { ProjectEmptyGate } from '@/components/project-empty-gate'
 import { ProjectRecoveryGate } from '@/components/project-recovery-gate'
 import { ResizeHandle } from '@/components/terminal/resize-handle'
 import { isStaticMode } from '@/lib/static-mode'
@@ -33,6 +34,7 @@ export function RootLayout() {
         <div className="app-body flex min-h-0 flex-1 flex-col">
           <ProjectRecoveryGate />
           <CliHealthGate />
+          <ProjectEmptyGate />
           <MobileHeader />
           <div className="flex min-h-0 flex-1 flex-col">
             {hasMainContent && (
