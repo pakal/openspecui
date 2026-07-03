@@ -219,3 +219,110 @@ process.exit(1)
     REACTIVE_TEST_TIMEOUT_MS
   )
 })
+
+describe('OpsxKernel CLI error handling', () => {
+  let tempDir: string
+  let kernel: OpsxKernel | null = null
+
+  beforeEach(async () => {
+    tempDir = await createTempDir()
+    await mkdir(join(tempDir, 'openspec'), { recursive: true })
+    await initWatcherPool(tempDir)
+    clearCache()
+  })
+
+  afterEach(async () => {
+    kernel?.dispose()
+    kernel = null
+    await closeAllWatchers()
+    await waitForDebounce(200)
+    clearCache()
+    await cleanupTempDir(tempDir)
+  })
+
+  async function prepareKernelWithChanges(changeIds: string[]): Promise<OpsxKernel> {
+    await writeFile(join(tempDir, 'openspec', 'config.yaml'), 'name: test\n', 'utf-8')
+    for (const changeId of changeIds) {
+      const changeDir = join(tempDir, 'openspec', 'changes', changeId)
+      await mkdir(changeDir, { recursive: true })
+      await writeFile(join(changeDir, '.openspec.yaml'), 'schema: test\n', 'utf-8')
+    }
+
+    // Fake CLI: changes whose id starts with 'bad' emulate openspec's structured
+    // error contract — a JSON envelope on STDOUT with a non-zero exit and empty
+    // stderr; every other change returns a valid status.
+    const cliScriptPath = join(tempDir, 'fake-openspec.mjs')
+    await writeFile(
+      cliScriptPath,
+      `
+const args = process.argv.slice(2)
+
+if (args.includes('--version')) {
+  console.log('0.0.0-test')
+  process.exit(0)
+}
+
+if (args[0] === 'status' && args.includes('--json')) {
+  const changeIndex = args.indexOf('--change')
+  const changeId = changeIndex >= 0 ? args[changeIndex + 1] : 'unknown-change'
+
+  if (changeId.startsWith('bad')) {
+    console.log(
+      JSON.stringify({
+        status: [
+          {
+            severity: 'error',
+            code: 'change_error',
+            message: 'Change "' + changeId + '" was not found.',
+          },
+        ],
+      })
+    )
+    process.exit(1)
+  }
+
+  console.log(
+    JSON.stringify({
+      changeName: changeId,
+      schemaName: 'test',
+      isComplete: true,
+      applyRequires: [],
+      artifacts: [],
+    })
+  )
+  process.exit(0)
+}
+
+console.error('Unsupported args:', args.join(' '))
+process.exit(1)
+      `.trimStart(),
+      'utf-8'
+    )
+
+    const configManager = new ConfigManager(tempDir)
+    await configManager.writeConfig({
+      cli: { command: process.execPath, args: [cliScriptPath] },
+    })
+    const cliExecutor = new CliExecutor(configManager, tempDir)
+    kernel = new OpsxKernel(tempDir, cliExecutor)
+    return kernel
+  }
+
+  it('surfaces the CLI structured error message instead of an opaque exit code', async () => {
+    const kernel = await prepareKernelWithChanges(['bad-change'])
+
+    await expect(kernel.ensureStatus('bad-change')).rejects.toThrow(
+      'Change "bad-change" was not found.'
+    )
+  })
+
+  it('excludes a failing change from the status list instead of poisoning it', async () => {
+    const kernel = await prepareKernelWithChanges(['good-change', 'bad-change'])
+
+    await kernel.ensureStatusList()
+
+    const names = kernel.getStatusList().map((status) => status.changeName)
+    expect(names).toContain('good-change')
+    expect(names).not.toContain('bad-change')
+  })
+})

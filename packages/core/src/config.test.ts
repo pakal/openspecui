@@ -7,6 +7,7 @@ import {
   DEFAULT_CONFIG,
   OpenSpecUIConfigSchema,
   buildCliRunnerCandidates,
+  resolveOpenspecNodeCommandFromShim,
 } from './config.js'
 import * as reactiveFs from './reactive-fs/index.js'
 import { clearCache } from './reactive-fs/index.js'
@@ -982,5 +983,45 @@ describe('buildCliRunnerCandidates', () => {
     const candidates = buildCliRunnerCandidates({ userAgent: 'bun/1.2.0' })
     const sources = candidates.map((candidate) => candidate.source)
     expect(sources).toEqual(['openspec', 'bunx', 'npx', 'deno', 'pnpm', 'yarn'])
+  })
+})
+
+describe('resolveOpenspecNodeCommandFromShim', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await createTempDir()
+  })
+
+  afterEach(async () => {
+    await cleanupTempDir(tempDir)
+  })
+
+  it('resolves a global-prefix shim to [node, bin/openspec.js]', async () => {
+    // Mirror the nvm4w layout: shim `<dir>/openspec` next to node_modules/.
+    const binPath = join(tempDir, 'node_modules', '@fission-ai', 'openspec', 'bin', 'openspec.js')
+    await mkdir(join(binPath, '..'), { recursive: true })
+    await writeFile(binPath, '#!/usr/bin/env node\n')
+
+    const command = await resolveOpenspecNodeCommandFromShim(join(tempDir, 'openspec'))
+
+    expect(command).toEqual([process.execPath, binPath])
+  })
+
+  it('resolves a node_modules/.bin shim via the sibling package layout', async () => {
+    // .bin shim `<dir>/.bin/openspec` -> package at `<dir>/@fission-ai/openspec`.
+    const binPath = join(tempDir, '@fission-ai', 'openspec', 'bin', 'openspec.js')
+    await mkdir(join(binPath, '..'), { recursive: true })
+    await writeFile(binPath, '#!/usr/bin/env node\n')
+
+    const command = await resolveOpenspecNodeCommandFromShim(join(tempDir, '.bin', 'openspec'))
+
+    expect(command).toEqual([process.execPath, binPath])
+  })
+
+  it('returns null when the openspec bin cannot be located', async () => {
+    const command = await resolveOpenspecNodeCommandFromShim(join(tempDir, 'openspec'))
+
+    expect(command).toBeNull()
   })
 })

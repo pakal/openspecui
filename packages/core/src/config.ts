@@ -1,5 +1,5 @@
 import { exec, execFile } from 'child_process'
-import { mkdir, writeFile } from 'fs/promises'
+import { access, mkdir, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { promisify } from 'util'
 import { z } from 'zod'
@@ -278,6 +278,43 @@ async function resolveShellExecutablePath(
   }
 }
 
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Map a Windows npm shim path (`.../openspec`, extensionless or `.cmd`) to a
+ * directly-spawnable `node <package>/bin/openspec.js` command.
+ *
+ * `where openspec` resolves to an npm shim that `spawn(..., { shell: false })`
+ * cannot launch on Windows (extensionless -> ENOENT; `.cmd` -> not an
+ * executable image), so every runner candidate fails with ENOENT. The package's
+ * bin script, however, launches fine via `process.execPath`. Returns the
+ * `[node, binPath]` parts, or null when the bin cannot be located.
+ */
+export async function resolveOpenspecNodeCommandFromShim(
+  shimPath: string
+): Promise<readonly string[] | null> {
+  const shimDir = dirname(shimPath)
+  const binCandidates = [
+    // Global prefix / project root: <dir>/node_modules/@fission-ai/openspec
+    join(shimDir, 'node_modules', '@fission-ai', 'openspec', 'bin', 'openspec.js'),
+    // node_modules/.bin layout: <dir>/../@fission-ai/openspec
+    join(shimDir, '..', '@fission-ai', 'openspec', 'bin', 'openspec.js'),
+  ]
+  for (const binPath of binCandidates) {
+    if (await fileExists(binPath)) {
+      return [process.execPath, binPath]
+    }
+  }
+  return null
+}
+
 async function expandCliRunnerCandidates(
   candidates: readonly CliRunnerCandidate[],
   cwd: string,
@@ -294,6 +331,21 @@ async function expandCliRunnerCandidates(
 
     if (shouldResolveViaShell && command) {
       const shellResolved = await resolveShellExecutablePath(command, cwd, env)
+
+      // On Windows the resolved `openspec` executable is an npm shim that
+      // spawn(shell:false) cannot launch. Prefer a directly-spawnable
+      // `node <bin>/openspec.js` command derived from the shim location.
+      if (process.platform === 'win32' && shellResolved) {
+        const nodeCommand = await resolveOpenspecNodeCommandFromShim(shellResolved)
+        if (nodeCommand) {
+          expanded.push({
+            ...candidate,
+            source: `${candidate.source} (node)`,
+            commandParts: [...nodeCommand, ...rest],
+          })
+        }
+      }
+
       if (shellResolved && shellResolved !== command) {
         expanded.push({
           ...candidate,

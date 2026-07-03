@@ -64,6 +64,64 @@ function parseCliJson<S extends z.ZodTypeAny>(raw: string, schema: S, label: str
   return result.data
 }
 
+/**
+ * openspec emits structured errors as `{ status: [{ severity, code, message }] }`
+ * on STDOUT while exiting non-zero (stderr is empty). This schema lets us recover
+ * that human-readable message instead of surfacing an opaque exit code.
+ */
+const CliErrorEnvelopeSchema = z.object({
+  status: z
+    .array(
+      z.object({
+        severity: z.string(),
+        code: z.string().optional(),
+        message: z.string(),
+      })
+    )
+    .min(1),
+})
+
+/** Recover the first meaningful error message from an openspec JSON error envelope. */
+function extractCliErrorMessage(stdout: string): string | null {
+  const trimmed = stdout.trim()
+  if (!trimmed.startsWith('{')) {
+    return null
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+  const result = CliErrorEnvelopeSchema.safeParse(parsed)
+  if (!result.success) {
+    return null
+  }
+  const entries = result.data.status
+  const firstError = entries.find((entry) => entry.severity.toLowerCase() === 'error')
+  const message = (firstError ?? entries[0]).message.trim()
+  return message || null
+}
+
+/**
+ * Build an Error for a failed CLI result, preferring the CLI's own structured
+ * message (STDOUT envelope), then stderr, then a labelled exit-code fallback.
+ */
+function cliFailureError(
+  result: { stdout: string; stderr: string; exitCode: number | null },
+  fallbackLabel: string
+): Error {
+  const structured = extractCliErrorMessage(result.stdout)
+  if (structured) {
+    return new Error(structured)
+  }
+  const stderr = result.stderr.trim()
+  if (stderr) {
+    return new Error(stderr)
+  }
+  return new Error(`${fallbackLabel} (exit ${result.exitCode ?? 'null'})`)
+}
+
 function toRelativePath(root: string, absolutePath: string): string {
   const rel = relative(root, absolutePath)
   return rel.split(sep).join('/')
@@ -326,9 +384,21 @@ export class OpsxKernel {
     const schemas = this._schemas.get()
     await Promise.all(schemas.map((s) => this.warmupSchema(s.name, signal)))
 
-    // Phase 3: Per-change (after changeIds resolved)
+    // Phase 3: Per-change (after changeIds resolved). Tolerate individual
+    // changes whose status fails (e.g. an invalid change name) so one bad
+    // change cannot abort warmup for the whole project.
     const changeIds = this._changeIds.get()
-    await Promise.all(changeIds.map((id) => this.warmupChange(id, signal)))
+    const changeOutcomes = await Promise.allSettled(
+      changeIds.map((id) => this.warmupChange(id, signal))
+    )
+    changeOutcomes.forEach((outcome, index) => {
+      if (outcome.status === 'rejected') {
+        console.warn(
+          `openspec: skipping change "${changeIds[index]}" during warmup:`,
+          outcome.reason
+        )
+      }
+    })
 
     // Phase 4: StatusList (depends on per-change statuses being ready)
     await this.startStreamOnce(
@@ -872,9 +942,7 @@ export class OpsxKernel {
     await touchOpsxProjectDeps(this.projectDir)
     const result = await this.cliExecutor.schemas()
     if (!result.success) {
-      throw new Error(
-        result.stderr || `openspec schemas failed (exit ${result.exitCode ?? 'null'})`
-      )
+      throw cliFailureError(result, 'openspec schemas failed')
     }
     return parseCliJson(result.stdout, z.array(SchemaInfoSchema), 'openspec schemas')
   }
@@ -902,7 +970,7 @@ export class OpsxKernel {
 
     const result = await this.cliExecutor.execute(args)
     if (!result.success) {
-      throw new Error(result.stderr || `openspec status failed (exit ${result.exitCode ?? 'null'})`)
+      throw cliFailureError(result, 'openspec status failed')
     }
     const status = parseCliJson(result.stdout, ChangeStatusSchema, 'openspec status')
     const changeRelDir = `openspec/changes/${changeId}`
@@ -916,8 +984,19 @@ export class OpsxKernel {
   private async fetchStatusList(): Promise<ChangeStatus[]> {
     await this.ensureChangeIds()
     const changeIds = this._changeIds.get()
-    await Promise.all(changeIds.map((id) => this.ensureStatus(id)))
-    return changeIds.map((id) => this.getStatus(id))
+    // Tolerate changes whose status fails (e.g. an invalid change name): exclude
+    // them from the list rather than rejecting the whole list.
+    const outcomes = await Promise.allSettled(changeIds.map((id) => this.ensureStatus(id)))
+    const statuses: ChangeStatus[] = []
+    changeIds.forEach((id, index) => {
+      const outcome = outcomes[index]
+      if (outcome.status === 'rejected') {
+        console.warn(`openspec: excluding change "${id}" from status list:`, outcome.reason)
+        return
+      }
+      statuses.push(this.getStatus(id))
+    })
+    return statuses
   }
 
   private async fetchInstructions(
@@ -933,9 +1012,7 @@ export class OpsxKernel {
 
     const result = await this.cliExecutor.execute(args)
     if (!result.success) {
-      throw new Error(
-        result.stderr || `openspec instructions failed (exit ${result.exitCode ?? 'null'})`
-      )
+      throw cliFailureError(result, 'openspec instructions failed')
     }
     return parseCliJson(result.stdout, ArtifactInstructionsSchema, 'openspec instructions')
   }
@@ -952,9 +1029,7 @@ export class OpsxKernel {
 
     const result = await this.cliExecutor.execute(args)
     if (!result.success) {
-      throw new Error(
-        result.stderr || `openspec instructions apply failed (exit ${result.exitCode ?? 'null'})`
-      )
+      throw cliFailureError(result, 'openspec instructions apply failed')
     }
     return parseCliJson(result.stdout, ApplyInstructionsSchema, 'openspec instructions apply')
   }
@@ -963,9 +1038,7 @@ export class OpsxKernel {
     await touchOpsxProjectDeps(this.projectDir)
     const result = await this.cliExecutor.schemaWhich(name)
     if (!result.success) {
-      throw new Error(
-        result.stderr || `openspec schema which failed (exit ${result.exitCode ?? 'null'})`
-      )
+      throw cliFailureError(result, 'openspec schema which failed')
     }
     const parsed = parseCliJson(result.stdout, SchemaResolutionSchema, 'openspec schema which')
     return {
@@ -1015,9 +1088,7 @@ export class OpsxKernel {
     await touchOpsxProjectDeps(this.projectDir)
     const result = await this.cliExecutor.templates(schema)
     if (!result.success) {
-      throw new Error(
-        result.stderr || `openspec templates failed (exit ${result.exitCode ?? 'null'})`
-      )
+      throw cliFailureError(result, 'openspec templates failed')
     }
     const templates = parseCliJson(result.stdout, TemplatesSchema, 'openspec templates')
     return Object.fromEntries(
