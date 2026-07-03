@@ -6,7 +6,7 @@
 
 import { access, mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { vi } from 'vitest'
 
 /** 创建临时测试目录 */
@@ -18,7 +18,7 @@ export async function createTempDir(): Promise<string> {
 export async function createTempFile(dir: string, name: string, content: string): Promise<string> {
   const filepath = join(dir, name)
   // 确保父目录存在
-  const parentDir = filepath.substring(0, filepath.lastIndexOf('/'))
+  const parentDir = dirname(filepath)
   if (parentDir !== dir) {
     await mkdir(parentDir, { recursive: true })
   }
