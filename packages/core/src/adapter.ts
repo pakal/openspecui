@@ -3,6 +3,7 @@ import { dirname, join } from 'path'
 import { inferFileMime, inferFilePreviewKind, isTextLikeFile } from './file-preview.js'
 import {
   buildOpsxEntityDetail,
+  normalizeOpsxEntityPath,
   parseOpsxEntityMetadata,
   type OpsxEntityDetail,
   type OpsxEntityReadOptions,
@@ -369,7 +370,9 @@ export class OpenSpecAdapter {
       const statInfo = await reactiveStat(fullPath)
       if (!statInfo) continue
 
-      const relativePath = fullPath.slice(root.length + 1)
+      // ChangeFile.path is a posix-separated openspec-relative path; `slice` keeps
+      // the native separator (`\` on Windows), so normalize before storing/matching.
+      const relativePath = normalizeOpsxEntityPath(fullPath.slice(root.length + 1))
 
       if (statInfo.isDirectory) {
         files.push({ path: relativePath, type: 'directory' })
