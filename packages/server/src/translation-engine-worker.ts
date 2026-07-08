@@ -643,10 +643,13 @@ function isWorkerRequest(value: unknown): value is ManagedLocalTranslationWorker
   )
 }
 
-if (!isMainThread) {
-  if (!isWorkerRequest(workerData)) {
-    throw new Error('Invalid managed local translation worker payload.')
-  }
+// Several worker roles share a single bundle, and the server barrel re-exports this
+// module, so it is evaluated in *every* worker thread — including the worktree server
+// worker, whose `workerData` is not a translation request. Only self-activate on a
+// genuine translation payload; otherwise no-op so the sibling entrypoint (e.g. the
+// worktree server worker in @openspecui/cli) can claim its own `workerData`. Throwing
+// here instead would abort any non-translation worker at module load.
+if (!isMainThread && isWorkerRequest(workerData)) {
   void runManagedLocalTranslationHost(workerData, {
     postMessage(message) {
       parentPort?.postMessage(message)
