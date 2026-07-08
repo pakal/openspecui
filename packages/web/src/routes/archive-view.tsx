@@ -6,14 +6,16 @@ import type { OpsxEntityDetail } from '@openspecui/core'
 import { getRouteApi, useLocation } from '@tanstack/react-router'
 import { Archive } from 'lucide-react'
 
-const route = getRouteApi('/archive/$changeId')
+// Splat route (`/archive/$`) so nested archived ids (`YYYY-MM/<change>`) survive the URL.
+const route = getRouteApi('/archive/$')
 
 function getArchiveTitle(entity: OpsxEntityDetail | null | undefined, fallbackId: string): string {
   return entity?.id ?? fallbackId
 }
 
 export function ArchiveView() {
-  const { changeId } = route.useParams()
+  const { _splat } = route.useParams()
+  const changeId = _splat ?? ''
   const location = useLocation()
 
   const { data: entity, isLoading, error } = useArchiveSubscription(changeId)

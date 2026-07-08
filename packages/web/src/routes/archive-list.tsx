@@ -36,8 +36,8 @@ export function ArchiveList() {
           return (
             <VTLink
               key={change.id}
-              to="/archive/$changeId"
-              params={{ changeId: change.id }}
+              to="/archive/$"
+              params={{ _splat: change.id }}
               state={(prev) => ({
                 ...prev,
                 __vtHandoff: {

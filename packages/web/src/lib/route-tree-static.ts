@@ -33,7 +33,8 @@ export function createStaticRouteTree(rootRoute: AnyRootRoute) {
     createRoute({ getParentRoute: () => rootRoute, path: '/archive', component: ArchiveList }),
     createRoute({
       getParentRoute: () => rootRoute,
-      path: '/archive/$changeId',
+      // Splat route so nested archived ids (`YYYY-MM/<change>`) survive the URL.
+      path: '/archive/$',
       component: ArchiveView,
     }),
     createRoute({ getParentRoute: () => rootRoute, path: '/settings', component: SettingsStatic }),

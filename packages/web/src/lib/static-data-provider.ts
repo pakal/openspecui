@@ -129,7 +129,9 @@ function resolveTrendTimestamp(
 }
 
 function parseDatedIdTimestamp(id: string): number | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})(?:-|$)/.exec(id)
+  // Nested archive ids (`YYYY-MM/<dated-change>`) carry the date on the leaf segment.
+  const leaf = id.slice(id.lastIndexOf('/') + 1)
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:-|$)/.exec(leaf)
   if (!match) return null
   const year = Number(match[1])
   const month = Number(match[2])

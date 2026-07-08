@@ -35,7 +35,7 @@ vi.mock('@/lib/use-opsx', () => ({
 
 vi.mock('@tanstack/react-router', () => ({
   getRouteApi: () => ({
-    useParams: () => ({ changeId: '2026-05-17-fix-change-document-hook-rendering' }),
+    useParams: () => ({ _splat: '2026-05-17-fix-change-document-hook-rendering' }),
   }),
   useLocation: () => ({ state: null }),
 }))

@@ -33,7 +33,7 @@ const ROUTE_SEMANTICS: readonly RouteSemanticMatcher[] = [
   { family: 'specs', level: 'top', pattern: /^\/specs$/ },
   { family: 'changes', level: 'detail', pattern: /^\/changes\/[^/]+$/ },
   { family: 'changes', level: 'top', pattern: /^\/changes$/ },
-  { family: 'archive', level: 'detail', pattern: /^\/archive\/[^/]+$/ },
+  { family: 'archive', level: 'detail', pattern: /^\/archive\/.+$/ },
   { family: 'archive', level: 'top', pattern: /^\/archive$/ },
   { family: 'settings', level: 'top', pattern: /^\/settings$/ },
   { family: 'terminal', level: 'top', pattern: /^\/terminal$/ },

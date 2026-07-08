@@ -111,6 +111,34 @@ artifacts:
 
     expect(meta?.progress).toEqual({ total: 1, completed: 1 })
   })
+
+  it('recurses into YYYY-MM month buckets to surface grouped archived changes', async () => {
+    const bucketDir = join(tempDir, 'openspec', 'changes', 'archive', '2026-06')
+    const nestedChangeDir = join(bucketDir, '2026-06-01-grouped-change')
+    await mkdir(nestedChangeDir, { recursive: true })
+    await writeFile(join(nestedChangeDir, 'proposal.md'), '# Grouped', 'utf-8')
+    await writeFile(join(nestedChangeDir, 'tasks.md'), '- [x] Done\n- [ ] Todo\n', 'utf-8')
+    // A plain change at the archive root must keep surfacing untouched.
+    const directChangeDir = join(tempDir, 'openspec', 'changes', 'archive', '2026-07-01-direct')
+    await mkdir(directChangeDir, { recursive: true })
+    await writeFile(join(directChangeDir, 'proposal.md'), '# Direct', 'utf-8')
+    clearCache()
+
+    const ids = await adapter.listArchivedChanges()
+    expect(ids).toContain('2026-06/2026-06-01-grouped-change')
+    expect(ids).toContain('2026-07-01-direct')
+    // The bucket folder itself is not a change id.
+    expect(ids).not.toContain('2026-06')
+
+    const archives = await adapter.listArchivedChangesWithMeta()
+    const nestedMeta = archives.find((a) => a.id === '2026-06/2026-06-01-grouped-change')
+    expect(nestedMeta?.name).toBe('2026-06-01-grouped-change')
+    expect(nestedMeta?.progress).toEqual({ total: 2, completed: 1 })
+
+    // Nested change files are readable through the composite id.
+    const files = await adapter.readArchivedChangeFiles('2026-06/2026-06-01-grouped-change')
+    expect(files.some((f) => f.type === 'file' && f.path === 'proposal.md')).toBe(true)
+  })
 })
 
 /**

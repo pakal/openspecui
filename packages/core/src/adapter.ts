@@ -19,6 +19,13 @@ import {
 } from './task-progress.js'
 import { Validator, type ValidationResult } from './validator.js'
 
+/**
+ * Month-bucket subfolder that groups older ("oldies") archived changes by archive
+ * month, e.g. `openspec/changes/archive/2026-06/`. Enumeration recurses one level
+ * into these so each grouped change surfaces individually as `2026-06/<change>`.
+ */
+const ARCHIVE_MONTH_BUCKET_PATTERN = /^\d{4}-\d{2}$/
+
 /** Spec metadata with time info */
 export interface SpecMeta {
   id: string
@@ -228,7 +235,34 @@ export class OpenSpecAdapter {
   }
 
   async listArchivedChanges(): Promise<string[]> {
-    return reactiveReadDir(this.archiveDir, { directoriesOnly: true })
+    return this.enumerateArchivedChangeIds()
+  }
+
+  /**
+   * Enumerate archived change ids, recursing one level into `YYYY-MM` month-bucket
+   * subfolders so grouped changes surface as `YYYY-MM/<change>` ids. A bucket with
+   * no subdirectories is treated as a plain archived change itself.
+   */
+  private async enumerateArchivedChangeIds(): Promise<string[]> {
+    const entries = await reactiveReadDir(this.archiveDir, { directoriesOnly: true })
+    const ids: string[] = []
+    for (const entry of entries) {
+      if (!ARCHIVE_MONTH_BUCKET_PATTERN.test(entry)) {
+        ids.push(entry)
+        continue
+      }
+      const nested = await reactiveReadDir(join(this.archiveDir, entry), {
+        directoriesOnly: true,
+      })
+      if (nested.length === 0) {
+        ids.push(entry)
+        continue
+      }
+      for (const child of nested) {
+        ids.push(`${entry}/${child}`)
+      }
+    }
+    return ids
   }
 
   /**
@@ -238,7 +272,7 @@ export class OpenSpecAdapter {
    * Sorted by updatedAt descending (most recent first)
    */
   async listArchivedChangesWithMeta(): Promise<ArchiveMeta[]> {
-    const ids = await this.listArchivedChanges()
+    const ids = await this.enumerateArchivedChangeIds()
     const results = await Promise.all(
       ids.map(async (id) => {
         const archiveDir = join(this.archiveDir, id)
@@ -248,7 +282,8 @@ export class OpenSpecAdapter {
         ])
         return {
           id,
-          name: id,
+          // Display the change name (leaf), not the `YYYY-MM/` bucket prefix.
+          name: id.slice(id.lastIndexOf('/') + 1),
           progress: taskProjection.progress,
           createdAt: timeInfo?.createdAt ?? 0,
           updatedAt: timeInfo?.updatedAt ?? 0,
