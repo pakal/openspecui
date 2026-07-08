@@ -25,6 +25,7 @@ import {
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const SOURCE_BOOTSTRAP_ENTRY_URL_KEY = '__openspecuiEntryUrl'
+const SOURCE_BOOTSTRAP_TSX_API_URL_KEY = '__openspecuiTsxApiUrl'
 
 export interface CLIOptions {
   /** Project directory containing openspec/ */
@@ -53,6 +54,7 @@ export interface RunningServer {
 
 interface SourceBootstrapWorkerData extends WorktreeServerWorkerData {
   [SOURCE_BOOTSTRAP_ENTRY_URL_KEY]: string
+  [SOURCE_BOOTSTRAP_TSX_API_URL_KEY]: string
 }
 
 function isSourceEntryUrl(entryUrl: string): boolean {
@@ -65,6 +67,11 @@ function buildSourceBootstrapWorkerData(
   return {
     ...options.workerData,
     [SOURCE_BOOTSTRAP_ENTRY_URL_KEY]: normalizeSourceBootstrapEntryUrl(import.meta.url),
+    // Resolve tsx's ESM API to an absolute URL here in the parent, where `tsx` is on the
+    // module path. The eval worker below has no file location, so a bare `tsx/esm/api`
+    // specifier would resolve against the worker's cwd (e.g. `P:\[worker eval]`) and fail
+    // with "Cannot find package 'tsx'" whenever the CLI is launched from outside the repo.
+    [SOURCE_BOOTSTRAP_TSX_API_URL_KEY]: import.meta.resolve('tsx/esm/api'),
   }
 }
 
@@ -77,7 +84,11 @@ const { parentPort, workerData } = require('node:worker_threads')
   if (typeof entryUrl !== 'string') {
     throw new Error('Invalid worktree source bootstrap entry URL.')
   }
-  const { tsImport } = await import('tsx/esm/api')
+  const tsxApiUrl = workerData.${SOURCE_BOOTSTRAP_TSX_API_URL_KEY}
+  if (typeof tsxApiUrl !== 'string') {
+    throw new Error('Invalid worktree source bootstrap tsx API URL.')
+  }
+  const { tsImport } = await import(tsxApiUrl)
   await tsImport(entryUrl, { parentURL: entryUrl })
 })().catch((error) => {
   parentPort?.postMessage(
